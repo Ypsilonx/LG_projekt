@@ -49,7 +49,18 @@ Tento projekt umožňuje číst stav a ovládat klimatizaci LG ThinQ pomocí Pyt
 - Nikdy nesdílejte své tokeny, `devices.json` ani `device_profile.json` veřejně.
 - `.gitignore` je nastaven tak, aby chránil citlivé údaje a dočasné soubory.
 
-## Další informace
+
+## Ovládání klimatizace skriptem
+
+Pro zapnutí/vypnutí klimatizace použijte skript `klima_power_toggle.py`. Ten využívá správný payload podle profilu zařízení:
+
+```python
+await api.async_post_device_control(DEVICE_ID, {"operation": {"airConOperationMode": "POWER_ON"}})
+# nebo pro vypnutí
+await api.async_post_device_control(DEVICE_ID, {"operation": {"airConOperationMode": "POWER_OFF"}})
+```
+
+Správný klíč a hodnoty zjistíte vždy v `device_profile.json` v sekci `property`.
 
 - Pro detailní možnosti ovládání klimatizace viz `KLIMATIZACE_OVLADANI.md`.
 - Pokud chcete rozšířit GUI o další funkce, upravte `klima_gui.py` dle potřeby.
