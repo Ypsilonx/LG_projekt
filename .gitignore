@@ -1,0 +1,32 @@
+# .gitignore pro LG_projekt
+.github/
+# Virtuální prostředí
+.venv/
+venv/
+
+# Soubory s tokeny a citlivými údaji
+*.json
+!device_profile.json
+!devices.json
+
+# Nastavení editoru
+.vscode/
+
+# Dočasné a záložní soubory
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.bak
+*.swp
+
+# Logy
+*.log
+
+# Testovací výstupy
+*.out
+*.tmp
+
+# OS specifické
+.DS_Store
+Thumbs.db
