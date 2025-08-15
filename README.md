@@ -1,17 +1,16 @@
+# LG ThinQ – Modulární projekt pro ovládání klimatizace
 
-# LG ThinQ – Ovládání klimatizace v Pythonu
+Tento projekt je rozdělen do přehledných modulů pro snadné rozšiřování a údržbu:
 
-Tento projekt umožňuje číst stav a ovládat klimatizaci LG ThinQ pomocí Pythonu a knihovny `thinqconnect`. Součástí je i jednoduché GUI pro pohodlné ovládání.
+## Struktura projektu
 
-## Soubory a jejich účel
-
-- `thinq_connection.py` – Získání a výpis všech zařízení na účtu LG, uložení do `devices.json`.
-- `klima_skript.py` – Stažení a uložení profilu konkrétního zařízení do `device_profile.json`.
-- `klima_gui.py` – Hlavní GUI aplikace pro čtení i ovládání klimatizace (Tkinter, async).
-- `gui_klima_stav.py` – Jednodušší GUI pouze pro čtení stavu klimatizace.
-- `devices.json`, `device_profile.json` – Uložená data o zařízeních a jejich profilech (cache, neukládejte do veřejného repozitáře).
-- `KLIMATIZACE_OVLADANI.md` – Přehled možností ovládání klimatizace, příklady volání API.
-- `.gitignore` – Nastavení ignorovaných souborů (včetně citlivých dat a prostředí).
+- `data/config.json` – Konfigurační soubor s klíči/tokeny pro přihlášení (odděleně od zařízení).
+- `data/devices.json`, `data/device_profile.json` – Data o zařízeních a profilech (cache, neukládejte do veřejného repozitáře).
+- `src/server_api.py` – Modul pro komunikaci se serverem (autentizace, získání dat, odesílání příkazů).
+- `src/klima_logic.py` – Modul s logikou pro ovládání klimatizace (generování payloadů, validace).
+- `src/frontend.py` – Frontend aplikace (CLI/GUI), pouze interakce s uživatelem.
+- `src/main.py` – Vstupní bod projektu, propojuje moduly (lze rozšiřovat).
+- Další skripty (např. `klima_gui.py`, `KLIMATIZACE_OVLADANI.md`) lze přidávat dle potřeby.
 
 ## Požadavky
 
@@ -30,37 +29,32 @@ Tento projekt umožňuje číst stav a ovládat klimatizaci LG ThinQ pomocí Pyt
    ```powershell
    pip install thinqconnect aiohttp
    ```
-3. Získejte a nastavte přístupové tokeny (viz dokumentace thinqconnect).
-4. Získejte seznam zařízení:
+3. Zadejte své klíče do `data/config.json`.
+4. Spusťte frontend:
    ```powershell
-   python thinq_connection.py
-   ```
-5. Stáhněte profil klimatizace:
-   ```powershell
-   python klima_skript.py
-   ```
-6. Spusťte GUI:
-   ```powershell
-   python klima_gui.py
+   python src/frontend.py
    ```
 
-## Bezpečnost a soukromí
+## Bezpečnost a rozšiřitelnost
 
 - Nikdy nesdílejte své tokeny, `devices.json` ani `device_profile.json` veřejně.
-- `.gitignore` je nastaven tak, aby chránil citlivé údaje a dočasné soubory.
+- `.gitignore` chrání citlivé údaje a dočasné soubory.
+- Každý modul je samostatný, lze snadno přidávat nové funkce (např. další zařízení, GUI, automatizace).
 
+## Ovládání klimatizace – příklad
 
-## Ovládání klimatizace skriptem
-
-Pro zapnutí/vypnutí klimatizace použijte skript `klima_power_toggle.py`. Ten využívá správný payload podle profilu zařízení:
-
+Pro zapnutí/vypnutí klimatizace použijte funkci:
 ```python
-await api.async_post_device_control(DEVICE_ID, {"operation": {"airConOperationMode": "POWER_ON"}})
-# nebo pro vypnutí
-await api.async_post_device_control(DEVICE_ID, {"operation": {"airConOperationMode": "POWER_OFF"}})
+from src.klima_logic import get_power_payload
+payload = get_power_payload(True)  # Zapnout
+payload = get_power_payload(False) # Vypnout
+```
+a odešlete ji pomocí:
+```python
+from src.server_api import send_device_command
+await send_device_command(api, DEVICE_ID, payload)
 ```
 
-Správný klíč a hodnoty zjistíte vždy v `device_profile.json` v sekci `property`.
+Správné klíče a hodnoty najdete vždy v `device_profile.json`.
 
 - Pro detailní možnosti ovládání klimatizace viz `KLIMATIZACE_OVLADANI.md`.
-- Pokud chcete rozšířit GUI o další funkce, upravte `klima_gui.py` dle potřeby.
