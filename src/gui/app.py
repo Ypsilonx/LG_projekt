@@ -366,8 +366,15 @@ class ClimateApp(tk.Tk):
     
     def manual_refresh(self):
         """Manuální obnovení stavu"""
-        self.status_var.set("Aktualizuji...")
-        asyncio.run_coroutine_threadsafe(self.update_device_status(), self.loop)
+        try:
+            self.status_var.set("Aktualizuji...")
+            self.led_indicator.set_state("error")  # Oranžová při načítání
+            asyncio.run_coroutine_threadsafe(self.update_device_status(), self.loop)
+            logger.info("Manuální refresh spuštěn")
+        except Exception as e:
+            logger.error(f"Chyba při manuálním refresh: {e}")
+            self.status_var.set(f"Chyba refresh: {e}")
+            self.led_indicator.set_state("error")
     
     def on_closing(self):
         """Čištění při zavírání aplikace"""

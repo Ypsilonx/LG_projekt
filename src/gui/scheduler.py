@@ -3,7 +3,7 @@ Modul pro správu a zobrazení plánovače klimatizace.
 Umožňuje vytváření časových plánů s různými režimy a nastaveními.
 """
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from datetime import datetime, time
 import json
 import os
@@ -12,40 +12,102 @@ from typing import List, Dict, Any
 class ScheduleEntry:
     """Třída reprezentující jeden záznam v plánu"""
     
-    def __init__(self, name: str = "", time_str: str = "08:00", 
-                 mode: str = "FAN", temperature: int = 22, wind: str = "AUTO", 
-                 power_on: bool = True, duration_hours: int = 2):
+    def __init__(self, name: str = "", start_time: str = "08:00", 
+                 end_time: str = "10:00", mode: str = "FAN", temperature: int = 22, 
+                 wind: str = "AUTO", power_on: bool = True):
         self.name = name
-        self.time_str = time_str
+        self.start_time = start_time
+        self.end_time = end_time
         self.mode = mode
         self.temperature = temperature
         self.wind = wind
         self.power_on = power_on
-        self.duration_hours = duration_hours
         self.enabled = True
         
+        # Zpětná kompatibilita - pokud je zadána jen délka
+        self.duration_hours = self._calculate_duration_hours()
+        
+    def _calculate_duration_hours(self) -> float:
+        """Výpočet délky trvání z časů start a end"""
+        try:
+            start = datetime.strptime(self.start_time, "%H:%M").time()
+            end = datetime.strptime(self.end_time, "%H:%M").time()
+            
+            # Převod na minuty pro výpočet
+            start_minutes = start.hour * 60 + start.minute
+            end_minutes = end.hour * 60 + end.minute
+            
+            # Pokud end_time je menší než start_time, předpokládáme přes půlnoc
+            if end_minutes <= start_minutes:
+                end_minutes += 24 * 60  # Přidat 24 hodin
+            
+            duration_minutes = end_minutes - start_minutes
+            return round(duration_minutes / 60.0, 2)
+        except:
+            return 2.0  # Výchozí 2 hodiny
+        
+    def _calculate_end_time_from_duration(self, duration_hours: float) -> str:
+        """Výpočet end_time z start_time a duration"""
+        try:
+            start = datetime.strptime(self.start_time, "%H:%M")
+            end = start.replace(hour=start.hour + int(duration_hours), 
+                              minute=start.minute + int((duration_hours % 1) * 60))
+            
+            # Handle překročení 24h
+            if end.hour >= 24:
+                end = end.replace(hour=end.hour - 24)
+            
+            return end.strftime("%H:%M")
+        except:
+            return "10:00"
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
-            "time": self.time_str,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
             "mode": self.mode,
             "temperature": self.temperature,
             "wind": self.wind,
             "power_on": self.power_on,
-            "duration_hours": self.duration_hours,
-            "enabled": self.enabled
+            "enabled": self.enabled,
+            # Zpětná kompatibilita
+            "time": self.start_time,
+            "duration_hours": self.duration_hours
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ScheduleEntry':
-        entry = cls()
-        entry.name = data.get("name", "")
-        entry.time_str = data.get("time", "08:00")
-        entry.mode = data.get("mode", "FAN")
-        entry.temperature = data.get("temperature", 22)
-        entry.wind = data.get("wind", "AUTO")
-        entry.power_on = data.get("power_on", True)
-        entry.duration_hours = data.get("duration_hours", 2)
+        """Vytvoření instance z dict s podporou starého i nového formátu"""
+        # Nový formát s start_time a end_time
+        if "start_time" in data and "end_time" in data:
+            entry = cls(
+                name=data.get("name", ""),
+                start_time=data.get("start_time", "08:00"),
+                end_time=data.get("end_time", "10:00"),
+                mode=data.get("mode", "FAN"),
+                temperature=data.get("temperature", 22),
+                wind=data.get("wind", "AUTO"),
+                power_on=data.get("power_on", True)
+            )
+        else:
+            # Starý formát - převést duration_hours na end_time
+            start_time = data.get("time", "08:00")
+            duration_hours = data.get("duration_hours", 2)
+            
+            entry = cls(
+                name=data.get("name", ""),
+                start_time=start_time,
+                end_time="10:00",  # Dočasně
+                mode=data.get("mode", "FAN"),
+                temperature=data.get("temperature", 22),
+                wind=data.get("wind", "AUTO"),
+                power_on=data.get("power_on", True)
+            )
+            
+            # Vypočítat end_time z duration
+            entry.end_time = entry._calculate_end_time_from_duration(duration_hours)
+        
         entry.enabled = data.get("enabled", True)
         return entry
 
@@ -96,7 +158,7 @@ class SchedulerWidget(ttk.Frame):
         
         # Nastavení sloupců
         self.schedule_tree.heading("#0", text="Název")
-        self.schedule_tree.heading("time", text="Čas")
+        self.schedule_tree.heading("time", text="Čas (od-do)")
         self.schedule_tree.heading("mode", text="Režim")
         self.schedule_tree.heading("temp", text="Teplota")
         self.schedule_tree.heading("wind", text="Větrák")
@@ -105,7 +167,7 @@ class SchedulerWidget(ttk.Frame):
         
         # Nastavení šířek sloupců
         self.schedule_tree.column("#0", width=120)
-        self.schedule_tree.column("time", width=60)
+        self.schedule_tree.column("time", width=100)
         self.schedule_tree.column("mode", width=60)
         self.schedule_tree.column("temp", width=60)
         self.schedule_tree.column("wind", width=60)
@@ -189,11 +251,12 @@ class SchedulerWidget(ttk.Frame):
         for i, entry in enumerate(self.schedule_entries):
             status = "🟢 Zapnuto" if entry.enabled else "🔴 Vypnuto"
             temp_text = f"{entry.temperature}°C" if entry.mode != "FAN" else "---"
+            time_text = f"{entry.start_time} - {entry.end_time}"
             
             self.schedule_tree.insert("", "end", iid=str(i), 
                                     text=entry.name or f"Plán {i+1}",
-                                    values=(entry.time_str, entry.mode, temp_text, 
-                                           entry.wind, f"{entry.duration_hours}h", status))
+                                    values=(time_text, entry.mode, temp_text, 
+                                           entry.wind, f"{entry.duration_hours:.1f}h", status))
         
         # Aktualizace status labelu
         enabled_count = sum(1 for e in self.schedule_entries if e.enabled)
@@ -247,10 +310,19 @@ class SchedulerWidget(ttk.Frame):
                 continue
                 
             try:
-                entry_time = datetime.strptime(entry.time_str, "%H:%M").time()
-                # Jednoduchá kontrola - můžeme rozšířit o datum a složitější logiku
-                if entry_time <= current_time_only:
-                    return entry
+                start_time = datetime.strptime(entry.start_time, "%H:%M").time()
+                end_time = datetime.strptime(entry.end_time, "%H:%M").time()
+                
+                # Kontrola, zda aktuální čas je mezi start_time a end_time
+                if end_time > start_time:
+                    # Normální rozsah (např. 8:00 - 10:00)
+                    if start_time <= current_time_only <= end_time:
+                        return entry
+                else:
+                    # Rozsah přes půlnoc (např. 22:00 - 02:00)
+                    if current_time_only >= start_time or current_time_only <= end_time:
+                        return entry
+                        
             except ValueError:
                 continue
                 
@@ -291,8 +363,13 @@ class ScheduleEditDialog:
         
         # Čas spuštění
         ttk.Label(main_frame, text="Čas spuštění (HH:MM):").pack(anchor="w", pady=(10,2))
-        self.time_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.time_var, width=10).pack(anchor="w", pady=2)
+        self.start_time_var = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=self.start_time_var, width=10).pack(anchor="w", pady=2)
+        
+        # Čas konce
+        ttk.Label(main_frame, text="Čas konce (HH:MM):").pack(anchor="w", pady=(10,2))
+        self.end_time_var = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=self.end_time_var, width=10).pack(anchor="w", pady=2)
         
         # Režim
         ttk.Label(main_frame, text="Režim:").pack(anchor="w", pady=(10,2))
@@ -317,15 +394,6 @@ class ScheduleEditDialog:
         self.wind_var = tk.StringVar()
         ttk.Combobox(main_frame, textvariable=self.wind_var, values=self.wind_options, state="readonly").pack(fill="x", pady=2)
         
-        # Doba trvání
-        ttk.Label(main_frame, text="Doba trvání (hodiny):").pack(anchor="w", pady=(10,2))
-        self.duration_var = tk.IntVar()
-        duration_scale = ttk.Scale(main_frame, from_=1, to=12, variable=self.duration_var, orient=tk.HORIZONTAL)
-        duration_scale.pack(fill="x", pady=2)
-        self.duration_label = ttk.Label(main_frame, text="2 hod")
-        self.duration_label.pack(anchor="w")
-        duration_scale.configure(command=self.update_duration_label)
-        
         # Zapnout zařízení
         self.power_var = tk.BooleanVar()
         ttk.Checkbutton(main_frame, text="Zapnout zařízení", variable=self.power_var).pack(anchor="w", pady=(10,2))
@@ -348,18 +416,54 @@ class ScheduleEditDialog:
         """Aktualizace labelu teploty"""
         self.temp_label.config(text=f"{int(float(value))}°C")
         
-    def update_duration_label(self, value):
-        """Aktualizace labelu doby trvání"""
-        hours = int(float(value))
-        self.duration_label.config(text=f"{hours} {'hod' if hours != 1 else 'hodina'}")
-        
     def load_entry_data(self):
         """Načtení dat ze záznamu do formuláře"""
         self.name_var.set(self.entry.name)
-        self.time_var.set(self.entry.time_str)
+        self.start_time_var.set(self.entry.start_time)
+        self.end_time_var.set(self.entry.end_time)
         self.mode_var.set(self.entry.mode)
         self.temp_var.set(self.entry.temperature)
         self.wind_var.set(self.entry.wind)
+        self.power_var.set(self.entry.power_on)
+        
+        # Aktualizace labelu teploty
+        self.update_temp_label(self.entry.temperature)
+        
+        # Skrytí teploty pro FAN režim
+        self.on_mode_change()
+        
+    def ok_clicked(self):
+        """Potvrzení změn"""
+        try:
+            # Validace časových formátů
+            start_time = self.start_time_var.get()
+            end_time = self.end_time_var.get()
+            
+            # Zkontroluj formát času
+            datetime.strptime(start_time, "%H:%M")
+            datetime.strptime(end_time, "%H:%M")
+            
+            # Vytvoř nový entry
+            self.result = ScheduleEntry(
+                name=self.name_var.get(),
+                start_time=start_time,
+                end_time=end_time,
+                mode=self.mode_var.get(),
+                temperature=int(self.temp_var.get()),
+                wind=self.wind_var.get(),
+                power_on=self.power_var.get()
+            )
+            
+            self.dialog.destroy()
+        except ValueError:
+            tk.messagebox.showerror("Chyba", "Neplatný formát času. Použijte HH:MM (např. 08:30)")
+        except Exception as e:
+            tk.messagebox.showerror("Chyba", f"Chyba při ukládání: {e}")
+            
+    def cancel_clicked(self):
+        """Zrušení změn"""
+        self.result = None
+        self.dialog.destroy()
         self.duration_var.set(self.entry.duration_hours)
         self.power_var.set(self.entry.power_on)
         
