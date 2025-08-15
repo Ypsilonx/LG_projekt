@@ -4,7 +4,6 @@ Optimalizovaná verze s caching a error handling.
 """
 import json
 import logging
-import aiohttp
 from pathlib import Path
 from thinqconnect import ThinQApi
 
@@ -16,7 +15,6 @@ class ThinQAPI:
     
     def __init__(self):
         self.api = None
-        self.session = None
         self.config = self.load_config()
         self.device_cache = {}
         
@@ -33,12 +31,10 @@ class ThinQAPI:
     async def initialize(self):
         """Inicializace API připojení"""
         if not self.api:
-            self.session = aiohttp.ClientSession()
             self.api = ThinQApi(
                 access_token=self.config["access_token"],
                 country_code=self.config["country_code"],
-                client_id=self.config["client_id"],
-                session=self.session
+                client_id=self.config["client_id"]
             )
         return self.api
     
@@ -104,9 +100,7 @@ class ThinQAPI:
     
     async def close(self):
         """Uzavření API připojení"""
-        if self.session:
-            await self.session.close()
-            self.session = None
+        # thinqconnect nepotřebuje explicitní uzavření
         self.api = None
         logger.info("API připojení uzavřeno")
 
