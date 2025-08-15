@@ -31,7 +31,31 @@ def create_control_payload(command_type: str, *args, **kwargs):
         elif command_type == "temperature":
             temperature = args[0] if args else 22
             mode = args[1] if len(args) > 1 else kwargs.get("mode")
-            payload = {"temperature": {"targetTemperature": int(temperature)}}
+            
+            # Pouze celé stupně jako v oficiální LG mobilní aplikaci
+            temp_rounded = round(float(temperature))  # Zaokrouhlení na celé číslo
+            
+            # Podle módu použijeme správné pole a rozsah podle device_profile.json
+            if mode == "COOL":
+                # Pro chlazení: rozsah 18-30°C
+                temp_clamped = max(18, min(30, temp_rounded))
+                temp_field = "coolTargetTemperature"
+            elif mode == "HEAT":
+                # Pro vytápění: rozsah 16-30°C  
+                temp_clamped = max(16, min(30, temp_rounded))
+                temp_field = "heatTargetTemperature"
+            elif mode == "AUTO":
+                # Pro automatický režim: rozsah 18-30°C
+                temp_clamped = max(18, min(30, temp_rounded))
+                temp_field = "autoTargetTemperature"
+            else:
+                # Fallback pro ostatní módy nebo když mód není specifikován
+                temp_clamped = max(18, min(30, temp_rounded))
+                temp_field = "targetTemperature"
+            
+            logger.info(f"Teplota: {temperature} -> zaokrouhleno: {temp_rounded} -> omezeno: {temp_clamped} (mód: {mode}, pole: {temp_field})")
+            
+            payload = {"temperature": {temp_field: temp_clamped}}
             # Pokud je specifikován mód, přidáme jej také
             if mode:
                 payload["airConJobMode"] = {"currentJobMode": mode}

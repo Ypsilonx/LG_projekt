@@ -14,7 +14,7 @@ class ScheduleEntry:
     
     def __init__(self, name: str = "", start_time: str = "08:00", 
                  end_time: str = "10:00", mode: str = "FAN", temperature: int = 22, 
-                 wind: str = "AUTO", power_on: bool = True):
+                 wind: str = "AUTO", power_on: bool = True, power_off_at_end: bool = True):
         self.name = name
         self.start_time = start_time
         self.end_time = end_time
@@ -22,6 +22,7 @@ class ScheduleEntry:
         self.temperature = temperature
         self.wind = wind
         self.power_on = power_on
+        self.power_off_at_end = power_off_at_end  # Vypnout na konci plánu
         self.enabled = True
         
         # Zpětná kompatibilita - pokud je zadána jen délka
@@ -70,6 +71,7 @@ class ScheduleEntry:
             "temperature": self.temperature,
             "wind": self.wind,
             "power_on": self.power_on,
+            "power_off_at_end": getattr(self, 'power_off_at_end', True),
             "enabled": self.enabled,
             # Zpětná kompatibilita
             "time": self.start_time,
@@ -88,7 +90,8 @@ class ScheduleEntry:
                 mode=data.get("mode", "FAN"),
                 temperature=data.get("temperature", 22),
                 wind=data.get("wind", "AUTO"),
-                power_on=data.get("power_on", True)
+                power_on=data.get("power_on", True),
+                power_off_at_end=data.get("power_off_at_end", True)
             )
         else:
             # Starý formát - převést duration_hours na end_time
@@ -102,7 +105,8 @@ class ScheduleEntry:
                 mode=data.get("mode", "FAN"),
                 temperature=data.get("temperature", 22),
                 wind=data.get("wind", "AUTO"),
-                power_on=data.get("power_on", True)
+                power_on=data.get("power_on", True),
+                power_off_at_end=data.get("power_off_at_end", True)
             )
             
             # Vypočítat end_time z duration
@@ -398,6 +402,10 @@ class ScheduleEditDialog:
         self.power_var = tk.BooleanVar()
         ttk.Checkbutton(main_frame, text="Zapnout zařízení", variable=self.power_var).pack(anchor="w", pady=(10,2))
         
+        # Vypnout zařízení na konci
+        self.power_off_var = tk.BooleanVar()
+        ttk.Checkbutton(main_frame, text="Vypnout zařízení na konci plánu", variable=self.power_off_var).pack(anchor="w", pady=2)
+        
         # Tlačítka
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill="x", pady=(20,0))
@@ -425,6 +433,7 @@ class ScheduleEditDialog:
         self.temp_var.set(self.entry.temperature)
         self.wind_var.set(self.entry.wind)
         self.power_var.set(self.entry.power_on)
+        self.power_off_var.set(getattr(self.entry, 'power_off_at_end', True))
         
         # Aktualizace labelu teploty
         self.update_temp_label(self.entry.temperature)
@@ -451,7 +460,8 @@ class ScheduleEditDialog:
                 mode=self.mode_var.get(),
                 temperature=int(self.temp_var.get()),
                 wind=self.wind_var.get(),
-                power_on=self.power_var.get()
+                power_on=self.power_var.get(),
+                power_off_at_end=self.power_off_var.get()
             )
             
             self.dialog.destroy()
@@ -462,40 +472,6 @@ class ScheduleEditDialog:
             
     def cancel_clicked(self):
         """Zrušení změn"""
-        self.result = None
-        self.dialog.destroy()
-        self.duration_var.set(self.entry.duration_hours)
-        self.power_var.set(self.entry.power_on)
-        
-        self.update_temp_label(self.entry.temperature)
-        self.update_duration_label(self.entry.duration_hours)
-        self.on_mode_change()
-        
-    def ok_clicked(self):
-        """Potvrzení změn"""
-        try:
-            # Validace času
-            datetime.strptime(self.time_var.get(), "%H:%M")
-            
-            # Vytvoření nového záznamu
-            result = ScheduleEntry(
-                name=self.name_var.get().strip(),
-                time_str=self.time_var.get(),
-                mode=self.mode_var.get(),
-                temperature=self.temp_var.get(),
-                wind=self.wind_var.get(),
-                power_on=self.power_var.get(),
-                duration_hours=self.duration_var.get()
-            )
-            
-            self.result = result
-            self.dialog.destroy()
-            
-        except ValueError:
-            tk.messagebox.showerror("Chyba", "Neplatný formát času! Použijte HH:MM (např. 08:30)")
-            
-    def cancel_clicked(self):
-        """Stornování změn"""
         self.result = None
         self.dialog.destroy()
         

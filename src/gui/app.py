@@ -14,7 +14,7 @@ import sys
 
 # Import modulů aplikace
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from server_api import ThinQAPI
+from server_api import ThinQAPI, send_device_command
 from klima_logic import create_control_payload
 from gui.theme import setup_dark_theme
 from gui.widgets import LEDIndicator
@@ -62,6 +62,13 @@ class ClimateApp(tk.Tk):
         
         # Pravidelná kontrola stavu
         self.periodic_status_check()
+        
+        # Pravidelná kontrola plánů (každou minutu)
+        self.schedule_check_active = True
+        self.last_executed_schedule = None
+        self.manual_schedule_override = False  # Příznak pro manuální přerušení plánu
+        self.schedule_was_active_last_check = False  # Pro detekci konce plánu
+        self.periodic_schedule_check()
         
     def load_device_profile(self):
         """Načtení profilu zařízení"""
@@ -149,7 +156,12 @@ class ClimateApp(tk.Tk):
         
         # Tlačítko manuální aktualizace
         refresh_btn = ttk.Button(status_frame, text="🔄 Aktualizovat", command=self.manual_refresh)
-        refresh_btn.pack(side=tk.RIGHT)
+        refresh_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        
+        # Tlačítko pro přerušení aktivního plánu
+        self.stop_schedule_btn = ttk.Button(status_frame, text="⏹️ Stop plán", 
+                                          command=self.stop_active_schedule, state='disabled')
+        self.stop_schedule_btn.pack(side=tk.RIGHT)
     
     def bind_mousewheel(self, canvas):
         """Bindování mouse wheel pro scrollování"""
@@ -219,6 +231,24 @@ class ClimateApp(tk.Tk):
                 
             elif command == "set_temperature":
                 temperature, mode = args[0], args[1] if len(args) > 1 else None
+                
+                # Chytrá logika: pokud změníme režim a teplotu současně, musíme čekat
+                if mode:
+                    # Nejdříve zkontroluj aktuální režim
+                    current_status = await api.get_device_status(DEVICE_ID)
+                    current_mode = current_status.get("airConJobMode", {}).get("currentJobMode", "")
+                    
+                    if current_mode != mode:
+                        logger.info(f"  ↳ Měním režim z {current_mode} na {mode} před nastavením teploty")
+                        # Nejdřív změň režim
+                        mode_payload = create_control_payload("mode", mode)
+                        await send_device_command(api, DEVICE_ID, mode_payload)
+                        logger.info(f"Příkaz change_mode před teplotou úspěšně odeslán")
+                        
+                        # Počkej 3 sekundy na změnu režimu
+                        await asyncio.sleep(3)
+                
+                # Pak nastav teplotu
                 payload = create_control_payload("temperature", temperature, mode)
                 
             elif command == "set_wind_strength":
@@ -248,37 +278,107 @@ class ClimateApp(tk.Tk):
             result = await api.send_device_command(DEVICE_ID, payload)
             logger.info(f"Příkaz {command} úspěšně odeslán: {result}")
             
-            # Rychlá aktualizace stavu (po 1 sekundě)
-            self.after(1000, lambda: asyncio.run_coroutine_threadsafe(
-                self.update_device_status(), self.loop
-            ))
+            # Pro nastavení teploty čekáme delší dobu na aktualizaci
+            if command == "set_temperature":
+                self.after(3000, lambda: asyncio.run_coroutine_threadsafe(
+                    self.update_device_status(), self.loop
+                ))
+                logger.info("Naplánována aktualizace stavu za 3 sekundy pro temperature")
+            else:
+                # Rychlá aktualizace stavu (po 1 sekundě)
+                self.after(1000, lambda: asyncio.run_coroutine_threadsafe(
+                    self.update_device_status(), self.loop
+                ))
             
         except Exception as e:
             logger.error(f"Chyba při provádění příkazu {command}: {e}")
             raise
-    
+
+    def stop_active_schedule(self):
+        """Zastavení aktivního plánu"""
+        try:
+            if self.last_executed_schedule:
+                logger.info(f"🛑 Uživatel přerušil aktivní plán: {self.last_executed_schedule.name}")
+                self.manual_schedule_override = True
+                self.schedule_was_active_last_check = False  # Reset tracking
+                self.last_executed_schedule = None
+                self.status_var.set("Aktivní plán byl přerušen")
+                self.stop_schedule_btn.config(state='disabled')
+                
+                # Resetuj override za 30 sekund
+                self.after(30000, lambda: setattr(self, 'manual_schedule_override', False))
+            else:
+                self.status_var.set("Žádný aktivní plán k přerušení")
+                
+        except Exception as e:
+            logger.error(f"Chyba při zastavování plánu: {e}")
+            self.status_var.set(f"Chyba: {e}")
+
     def execute_scheduled_command(self, schedule_entry):
         """Provádění naplánovaného příkazu"""
-        logger.info(f"Provádím naplánovaný příkaz: {schedule_entry}")
+        logger.info(f"🎯 Provádím naplánovaný příkaz: {schedule_entry.name}")
         
-        # Konverze schedule_entry na příkazy zařízení
-        if schedule_entry.power_on:
-            self.handle_device_command("toggle_power")
-        
-        if schedule_entry.mode:
-            self.handle_device_command("change_mode", schedule_entry.mode)
-        
-        if schedule_entry.temperature:
-            self.handle_device_command("set_temperature", schedule_entry.temperature, schedule_entry.mode)
-        
-        if schedule_entry.wind_strength:
-            self.handle_device_command("set_wind_strength", schedule_entry.wind_strength)
-        
-        # Wind direction
-        if hasattr(schedule_entry, 'wind_updown') or hasattr(schedule_entry, 'wind_leftright'):
-            updown = getattr(schedule_entry, 'wind_updown', False)
-            leftright = getattr(schedule_entry, 'wind_leftright', False)
-            self.handle_device_command("set_wind_direction", updown, leftright)
+        try:
+            # Nejdříve zapnout zařízení (pokud je potřeba)
+            if schedule_entry.power_on:
+                logger.info("  ↳ Zapínám zařízení")
+                self.handle_device_command("toggle_power")
+                
+                # Počkat 3 sekundy, aby se zařízení zapnulo
+                def continue_after_power_on():
+                    try:
+                        # Pak nastavit ostatní parametry
+                        if schedule_entry.mode:
+                            logger.info(f"  ↳ Nastavuji režim: {schedule_entry.mode}")
+                            self.handle_device_command("change_mode", schedule_entry.mode)
+                        
+                        # Další pauza před dalšími příkazy
+                        def set_remaining_params():
+                            try:
+                                if schedule_entry.temperature and schedule_entry.mode != "FAN":
+                                    logger.info(f"  ↳ Nastavuji teplotu: {schedule_entry.temperature}°C")
+                                    self.handle_device_command("set_temperature", schedule_entry.temperature, schedule_entry.mode)
+                                
+                                if schedule_entry.wind:
+                                    logger.info(f"  ↳ Nastavuji sílu větráku: {schedule_entry.wind}")
+                                    self.handle_device_command("set_wind_strength", schedule_entry.wind)
+                                
+                                logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
+                                self.status_var.set(f"Plán '{schedule_entry.name}' dokončen")
+                                
+                            except Exception as e:
+                                logger.error(f"❌ Chyba při nastavování parametrů plánu '{schedule_entry.name}': {e}")
+                                self.status_var.set(f"Chyba při nastavování: {e}")
+                        
+                        # Počkat dalších 2 sekundy před nastavením ostatních parametrů
+                        self.after(2000, set_remaining_params)
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Chyba při nastavování režimu plánu '{schedule_entry.name}': {e}")
+                        self.status_var.set(f"Chyba při nastavování režimu: {e}")
+                
+                # Počkat 3 sekundy po zapnutí
+                self.after(3000, continue_after_power_on)
+                
+            else:
+                # Pokud se nezapíná, nastavit parametry hned
+                if schedule_entry.mode:
+                    logger.info(f"  ↳ Nastavuji režim: {schedule_entry.mode}")
+                    self.handle_device_command("change_mode", schedule_entry.mode)
+                
+                if schedule_entry.temperature and schedule_entry.mode != "FAN":
+                    logger.info(f"  ↳ Nastavuji teplotu: {schedule_entry.temperature}°C")
+                    self.handle_device_command("set_temperature", schedule_entry.temperature, schedule_entry.mode)
+                
+                if schedule_entry.wind:
+                    logger.info(f"  ↳ Nastavuji sílu větráku: {schedule_entry.wind}")
+                    self.handle_device_command("set_wind_strength", schedule_entry.wind)
+                
+                logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
+            
+        except Exception as e:
+            logger.error(f"❌ Chyba při provádění plánu '{schedule_entry.name}': {e}")
+            self.status_var.set(f"Chyba při provádění plánu: {e}")
     
     def on_schedule_change(self, schedule_entries):
         """Callback volaný při změně plánu"""
@@ -303,6 +403,25 @@ class ClimateApp(tk.Tk):
             
         except Exception as e:
             logger.error(f"Chyba při aktualizaci stavu: {e}")
+            self.after(0, lambda: self.status_var.set(f"Chyba: {e}"))
+            self.after(0, lambda: self.led_indicator.set_state("error"))
+
+    async def manual_update_device_status(self):
+        """Speciální verze update_device_status pro manual refresh - vždycky aktualizuje GUI"""
+        try:
+            api = await self.initialize_api()
+            status = await api.get_device_status(DEVICE_ID)
+            
+            # Při manual refresh VŽDYCKY aktualizujeme GUI, i když se stav nezměnil
+            self.last_device_status = status
+            
+            # Aktualizace GUI v hlavním vlákně
+            self.after(0, lambda: self._update_gui_status(status))
+            
+            logger.info("Manual refresh: Stav zařízení aktualizován")
+            
+        except Exception as e:
+            logger.error(f"Chyba při manual refresh: {e}")
             self.after(0, lambda: self.status_var.set(f"Chyba: {e}"))
             self.after(0, lambda: self.led_indicator.set_state("error"))
     
@@ -363,13 +482,199 @@ class ClimateApp(tk.Tk):
         
         # Plánování další kontroly
         self.after(self.status_check_interval, self.periodic_status_check)
+
+    def periodic_schedule_check(self):
+        """Pravidelná kontrola plánů pro automatické spouštění"""
+        if not self.schedule_check_active:
+            return
+            
+        try:
+            from datetime import datetime
+            current_time = datetime.now()
+            
+            # Zkontroluj, jestli existuje aktivní plán pro aktuální čas
+            if hasattr(self, 'scheduler_widget') and self.scheduler_widget:
+                active_schedule = self.scheduler_widget.get_active_schedule_for_time(current_time)
+                
+                if active_schedule and not self.manual_schedule_override:
+                    # AKTIVNÍ PLÁN
+                    self.schedule_was_active_last_check = True
+                    
+                    # Aktualizace tlačítka Stop plán - povolit
+                    self.after(0, lambda: self.stop_schedule_btn.config(state='normal'))
+                    
+                    if active_schedule != self.last_executed_schedule:
+                        # Nový plán k provedení
+                        current_minute = current_time.strftime("%H:%M")
+                        schedule_start = active_schedule.start_time
+                        
+                        # Spustit jen pokud jsme přesně na začátku plánovaného času (±1 minuta)
+                        # NEBO pokud je plán aktivní a ještě nebyl spuštěn (restart aplikace během plánu)
+                        if (current_minute == schedule_start or 
+                            (self.last_executed_schedule is None and active_schedule.enabled)):
+                            
+                            logger.info(f"🕒 Spouštím naplánovaný příkaz: {active_schedule.name} v {schedule_start}")
+                            self.execute_scheduled_command(active_schedule)
+                            self.last_executed_schedule = active_schedule
+                            
+                    # Aktualizace status baru s aktivním plánem
+                    remaining_time = self._calculate_remaining_time(active_schedule, current_time)
+                    if remaining_time:
+                        self.after(0, lambda: self.status_var.set(
+                            f"🏃 Aktivní: {active_schedule.name} (zbývá {remaining_time})"
+                        ))
+                        
+                else:
+                    # ŽÁDNÝ AKTIVNÍ PLÁN
+                    self.after(0, lambda: self.stop_schedule_btn.config(state='disabled'))
+                    
+                    # Detekce konce plánu - pokud předtím byl aktivní a teď není
+                    if self.schedule_was_active_last_check and self.last_executed_schedule and not self.manual_schedule_override:
+                        # Zkontroluj, jestli má plán vypnout zařízení na konci
+                        if getattr(self.last_executed_schedule, 'power_off_at_end', True):
+                            logger.info(f"🔚 Plán '{self.last_executed_schedule.name}' skončil - vypínám zařízení")
+                            self.handle_device_command("toggle_power")  # Vypnout zařízení
+                            self.status_var.set(f"Plán '{self.last_executed_schedule.name}' dokončen - zařízení vypnuto")
+                        else:
+                            logger.info(f"🔚 Plán '{self.last_executed_schedule.name}' skončil - zařízení zůstává zapnuté")
+                            self.status_var.set(f"Plán '{self.last_executed_schedule.name}' dokončen - zařízení běží")
+                    
+                    self.schedule_was_active_last_check = False
+                    
+                    if not active_schedule:
+                        self.last_executed_schedule = None
+                        
+                    # Najdi nejbližší plán
+                    next_schedule, time_to_next = self._find_next_schedule(current_time)
+                    if next_schedule and time_to_next:
+                        # Updatej status pouze pokud není jiný text
+                        current_status = self.status_var.get()
+                        if (not current_status.startswith("🏃") and not current_status.startswith("Chyba") 
+                            and not current_status.startswith("Aktivní plán byl přerušen")
+                            and not current_status.startswith("Plán ") and "dokončen" not in current_status):
+                            self.after(0, lambda: self.status_var.set(
+                                f"⏰ Další: {next_schedule.name} za {time_to_next}"
+                            ))
+                    
+        except Exception as e:
+            logger.error(f"Chyba při kontrole plánů: {e}")
+        
+        # Naplánuj další kontrolu za 30 sekund
+        if self.schedule_check_active:
+            self.after(30000, self.periodic_schedule_check)  # 30 sekund
+    
+    def _calculate_remaining_time(self, schedule_entry, current_time):
+        """Výpočet zbývajícího času aktivního plánu"""
+        try:
+            from datetime import datetime, time
+            end_time = datetime.strptime(schedule_entry.end_time, "%H:%M").time()
+            current_time_only = current_time.time()
+            
+            # Převod na minuty
+            end_minutes = end_time.hour * 60 + end_time.minute
+            current_minutes = current_time_only.hour * 60 + current_time_only.minute
+            
+            if end_minutes < current_minutes:  # Přes půlnoc
+                end_minutes += 24 * 60
+            
+            remaining_minutes = end_minutes - current_minutes
+            if remaining_minutes > 0:
+                hours = remaining_minutes // 60
+                minutes = remaining_minutes % 60
+                if hours > 0:
+                    return f"{hours}h {minutes}min"
+                else:
+                    return f"{minutes}min"
+        except:
+            pass
+        return None
+    
+    def _find_next_schedule(self, current_time):
+        """Najde nejbližší nadcházející plán"""
+        try:
+            if not hasattr(self, 'scheduler_widget') or not self.scheduler_widget:
+                return None, None
+                
+            from datetime import datetime, timedelta
+            current_time_only = current_time.time()
+            current_minutes = current_time_only.hour * 60 + current_time_only.minute
+            
+            closest_schedule = None
+            closest_minutes = float('inf')
+            
+            for entry in self.scheduler_widget.schedule_entries:
+                if not entry.enabled:
+                    continue
+                    
+                try:
+                    start_time = datetime.strptime(entry.start_time, "%H:%M").time()
+                    start_minutes = start_time.hour * 60 + start_time.minute
+                    
+                    # Pokud je start_time dnes později
+                    if start_minutes > current_minutes:
+                        minutes_diff = start_minutes - current_minutes
+                        if minutes_diff < closest_minutes:
+                            closest_minutes = minutes_diff
+                            closest_schedule = entry
+                    else:
+                        # Zítra
+                        minutes_diff = (24 * 60) - current_minutes + start_minutes
+                        if minutes_diff < closest_minutes:
+                            closest_minutes = minutes_diff
+                            closest_schedule = entry
+                            
+                except:
+                    continue
+            
+            if closest_schedule and closest_minutes < float('inf'):
+                hours = closest_minutes // 60
+                minutes = closest_minutes % 60
+                if hours > 24:
+                    return closest_schedule, f"{hours//24}d {hours%24}h"
+                elif hours > 0:
+                    return closest_schedule, f"{hours}h {minutes}min"
+                else:
+                    return closest_schedule, f"{minutes}min"
+                    
+        except Exception as e:
+            logger.error(f"Chyba při hledání nejbližšího plánu: {e}")
+            
+        return None, None
     
     def manual_refresh(self):
         """Manuální obnovení stavu"""
         try:
+            logger.info("🔄 Manuální refresh - START")
             self.status_var.set("Aktualizuji...")
             self.led_indicator.set_state("error")  # Oranžová při načítání
-            asyncio.run_coroutine_threadsafe(self.update_device_status(), self.loop)
+            
+            # Spustíme async update a čekáme na výsledek
+            future = asyncio.run_coroutine_threadsafe(self.manual_update_device_status(), self.loop)
+            
+            # Počkáme chvilku a zkontrolujeme stav
+            def check_result():
+                try:
+                    if future.done():
+                        if future.exception():
+                            error = future.exception()
+                            logger.error(f"❌ Manual refresh failed: {error}")
+                            self.status_var.set(f"Chyba refresh: {error}")
+                            self.led_indicator.set_state("error")
+                        else:
+                            logger.info("✅ Manual refresh - SUCCESS")
+                            # Nebudeme nastavovat success, necháme LED odrážet skutečný stav zařízení
+                            # LED se aktualizuje automaticky v _update_gui_status
+                    else:
+                        # Pokud ještě nedoběhl, zkusíme znovu za 500ms
+                        self.after(500, check_result)
+                except Exception as e:
+                    logger.error(f"❌ Check result error: {e}")
+                    self.status_var.set(f"Chyba: {e}")
+                    self.led_indicator.set_state("error")
+            
+            # Zkontrolujeme výsledek za 1s
+            self.after(1000, check_result)
+            
             logger.info("Manuální refresh spuštěn")
         except Exception as e:
             logger.error(f"Chyba při manuálním refresh: {e}")
@@ -379,6 +684,9 @@ class ClimateApp(tk.Tk):
     def on_closing(self):
         """Čištění při zavírání aplikace"""
         try:
+            # Zastavíme kontrolu plánů
+            self.schedule_check_active = False
+            
             if self.api:
                 asyncio.run_coroutine_threadsafe(self.api.close(), self.loop)
             self.loop.call_soon_threadsafe(self.loop.stop)
