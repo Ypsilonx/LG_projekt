@@ -230,26 +230,9 @@ class ClimateApp(tk.Tk):
                 payload = create_control_payload("mode", mode)
                 
             elif command == "set_temperature":
-                temperature, mode = args[0], args[1] if len(args) > 1 else None
-                
-                # Chytrá logika: pokud změníme režim a teplotu současně, musíme čekat
-                if mode:
-                    # Nejdříve zkontroluj aktuální režim
-                    current_status = await api.get_device_status(DEVICE_ID)
-                    current_mode = current_status.get("airConJobMode", {}).get("currentJobMode", "")
-                    
-                    if current_mode != mode:
-                        logger.info(f"  ↳ Měním režim z {current_mode} na {mode} před nastavením teploty")
-                        # Nejdřív změň režim
-                        mode_payload = create_control_payload("mode", mode)
-                        await send_device_command(api, DEVICE_ID, mode_payload)
-                        logger.info(f"Příkaz change_mode před teplotou úspěšně odeslán")
-                        
-                        # Počkej 3 sekundy na změnu režimu
-                        await asyncio.sleep(3)
-                
-                # Pak nastav teplotu
-                payload = create_control_payload("temperature", temperature, mode)
+                temperature = args[0]
+                # OPRAVA: Pouze teplota bez režimu (fungující řešení)
+                payload = create_control_payload("temperature", temperature)
                 
             elif command == "set_wind_strength":
                 wind_strength = args[0]
@@ -337,21 +320,31 @@ class ClimateApp(tk.Tk):
                             try:
                                 if schedule_entry.temperature and schedule_entry.mode != "FAN":
                                     logger.info(f"  ↳ Nastavuji teplotu: {schedule_entry.temperature}°C")
-                                    self.handle_device_command("set_temperature", schedule_entry.temperature, schedule_entry.mode)
+                                    # OPRAVA: Odesíláme pouze teplotu bez režimu (fungující řešení)
+                                    self.handle_device_command("set_temperature", schedule_entry.temperature)
                                 
+                                # Další pauza před větrákem
+                                def set_wind_after_temp():
+                                    if schedule_entry.wind:
+                                        logger.info(f"  ↳ Nastavuji sílu větráku: {schedule_entry.wind}")
+                                        self.handle_device_command("set_wind_strength", schedule_entry.wind)
+                                    
+                                    logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
+                                    self.status_var.set(f"Plán '{schedule_entry.name}' dokončen")
+                                
+                                # Počkat 2 sekundy mezi teplotou a větrem
                                 if schedule_entry.wind:
-                                    logger.info(f"  ↳ Nastavuji sílu větráku: {schedule_entry.wind}")
-                                    self.handle_device_command("set_wind_strength", schedule_entry.wind)
-                                
-                                logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
-                                self.status_var.set(f"Plán '{schedule_entry.name}' dokončen")
+                                    self.after(2000, set_wind_after_temp)
+                                else:
+                                    logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
+                                    self.status_var.set(f"Plán '{schedule_entry.name}' dokončen")
                                 
                             except Exception as e:
                                 logger.error(f"❌ Chyba při nastavování parametrů plánu '{schedule_entry.name}': {e}")
                                 self.status_var.set(f"Chyba při nastavování: {e}")
                         
-                        # Počkat dalších 2 sekundy před nastavením ostatních parametrů
-                        self.after(2000, set_remaining_params)
+                        # Počkat dalších 3 sekund před nastavením teploty (místo 2)
+                        self.after(3000, set_remaining_params)
                         
                     except Exception as e:
                         logger.error(f"❌ Chyba při nastavování režimu plánu '{schedule_entry.name}': {e}")
@@ -361,20 +354,38 @@ class ClimateApp(tk.Tk):
                 self.after(3000, continue_after_power_on)
                 
             else:
-                # Pokud se nezapíná, nastavit parametry hned
+                # Pokud se nezapíná, nastavit parametry postupně s pauzami
                 if schedule_entry.mode:
                     logger.info(f"  ↳ Nastavuji režim: {schedule_entry.mode}")
                     self.handle_device_command("change_mode", schedule_entry.mode)
                 
-                if schedule_entry.temperature and schedule_entry.mode != "FAN":
-                    logger.info(f"  ↳ Nastavuji teplotu: {schedule_entry.temperature}°C")
-                    self.handle_device_command("set_temperature", schedule_entry.temperature, schedule_entry.mode)
+                def set_temp_after_mode():
+                    if schedule_entry.temperature and schedule_entry.mode != "FAN":
+                        logger.info(f"  ↳ Nastavuji teplotu: {schedule_entry.temperature}°C")
+                        # OPRAVA: Odesíláme pouze teplotu bez režimu (fungující řešení)
+                        self.handle_device_command("set_temperature", schedule_entry.temperature)
+                    
+                    def set_wind_after_temp():
+                        if schedule_entry.wind:
+                            logger.info(f"  ↳ Nastavuji sílu větráku: {schedule_entry.wind}")
+                            self.handle_device_command("set_wind_strength", schedule_entry.wind)
+                        
+                        logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
+                    
+                    # Pauza před větrákem
+                    if schedule_entry.wind:
+                        self.after(2000, set_wind_after_temp)
+                    else:
+                        logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
                 
-                if schedule_entry.wind:
-                    logger.info(f"  ↳ Nastavuji sílu větráku: {schedule_entry.wind}")
-                    self.handle_device_command("set_wind_strength", schedule_entry.wind)
-                
-                logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
+                # Pauza po změně režimu před teplotou
+                if schedule_entry.mode and (schedule_entry.temperature or schedule_entry.wind):
+                    self.after(3000, set_temp_after_mode)
+                elif not schedule_entry.mode:
+                    # Pokud se nemění režim, spustíme hned
+                    set_temp_after_mode()
+                else:
+                    logger.info(f"✅ Plán '{schedule_entry.name}' byl úspěšně proveden")
             
         except Exception as e:
             logger.error(f"❌ Chyba při provádění plánu '{schedule_entry.name}': {e}")

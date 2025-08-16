@@ -58,6 +58,10 @@ class ThinQAPI:
             if device_id in self.device_cache:
                 if status == self.device_cache[device_id]:
                     logger.debug(f"Stav zařízení {device_id[:8]}... nezměněn")
+                else:
+                    logger.info(f"📋 Stav zařízení aktualizován")
+            else:
+                logger.info(f"📋 První načtení stavu zařízení")
             
             self.device_cache[device_id] = status
             return status
@@ -71,7 +75,7 @@ class ThinQAPI:
         try:
             api = await self.initialize()
             
-            logger.info(f"Odesílám příkaz zařízení {device_id[:8]}...: {payload}")
+            logger.info(f"📤 API příkaz: {json.dumps(payload, ensure_ascii=False)}")
             
             if hasattr(api, 'async_post_device_control'):
                 result = await api.async_post_device_control(device_id, payload)
@@ -79,11 +83,11 @@ class ThinQAPI:
                 # Fallback pro synchronní verzi
                 result = api.post_device_control(device_id, payload)
             
-            logger.info(f"Příkaz úspěšně odeslán: {result}")
+            logger.info(f"📥 API odpověď: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"Chyba při odesílání příkazu: {e}")
+            logger.error(f"❌ Chyba při odesílání příkazu: {e}")
             raise
     
     async def get_devices(self):

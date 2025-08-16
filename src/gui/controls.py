@@ -68,7 +68,7 @@ class ClimateControls(ttk.Frame):
         
         self.temp_scale = ttk.Scale(self.target_temp_frame, from_=16, to=30, variable=self.temp_var, 
                                    orient=tk.HORIZONTAL, length=250, command=self.update_temp_label)
-        # ttk.Scale nemá resolution, takže budeme zaokrouhlovat v callback
+        # ttk.Scale nemá resolution, takže budeme zaokrouhlovat na půlstupně v callback
         self.temp_scale.pack(pady=5, fill='x')
         
         self.temp_btn = ttk.Button(self.target_temp_frame, text="Nastavit teplotu", command=self.set_temperature)
@@ -133,7 +133,7 @@ class ClimateControls(ttk.Frame):
             self.target_temp_frame.pack(fill='x', pady=5, after=self.current_temp_label)
             self.temp_frame.configure(text="🌡️ Teplota")
             
-            # Upravíme rozsah teplot podle módu (podle device_profile.json)
+            # Upravíme rozsah teplot podle módu (pouze celá čísla)
             if current_mode == "COOL":
                 # Chlazení: 18-30°C
                 self.temp_scale.configure(from_=18, to=30)
@@ -156,8 +156,8 @@ class ClimateControls(ttk.Frame):
         
     def update_temp_label(self, value):
         """Aktualizace zobrazení teploty při pohybu slideru"""
-        # Zaokrouhlíme na celé stupně jako v oficiální LG aplikaci
-        temp = round(float(value))
+        # Pouze celá čísla (žádné půlstupně)
+        temp = int(round(float(value)))
         # Nastavíme zaokrouhlenou hodnotu zpět do proměnné
         self.temp_var.set(temp)
         self.temp_label.config(text=f"Cíl: {temp}°C")
@@ -210,7 +210,8 @@ class ClimateControls(ttk.Frame):
             
     def set_temperature(self):
         if self.on_command:
-            self.on_command("set_temperature", self.temp_var.get(), self.mode_var.get())
+            # Pošleme pouze teplotu bez režimu (nechá aktuální režim)
+            self.on_command("set_temperature", self.temp_var.get())
             
     def set_wind_strength(self):
         if self.on_command:

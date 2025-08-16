@@ -3,6 +3,7 @@ Logika pro vytváření příkazů a payloadů pro LG ThinQ klimatizaci.
 Obsahuje všechny typy kontrolních příkazů.
 """
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -32,33 +33,35 @@ def create_control_payload(command_type: str, *args, **kwargs):
             temperature = args[0] if args else 22
             mode = args[1] if len(args) > 1 else kwargs.get("mode")
             
-            # Pouze celé stupně jako v oficiální LG mobilní aplikaci
-            temp_rounded = round(float(temperature))  # Zaokrouhlení na celé číslo
+            # Celá čísla pouze (žádné půlstupně)
+            temp_int = int(round(float(temperature)))
             
-            # Podle módu použijeme správné pole a rozsah podle device_profile.json
-            if mode == "COOL":
-                # Pro chlazení: rozsah 18-30°C
-                temp_clamped = max(18, min(30, temp_rounded))
-                temp_field = "coolTargetTemperature"
-            elif mode == "HEAT":
-                # Pro vytápění: rozsah 16-30°C  
-                temp_clamped = max(16, min(30, temp_rounded))
-                temp_field = "heatTargetTemperature"
-            elif mode == "AUTO":
-                # Pro automatický režim: rozsah 18-30°C
-                temp_clamped = max(18, min(30, temp_rounded))
-                temp_field = "autoTargetTemperature"
+            # Rozsah podle módu pro validaci (ale vždy odesíláme do obecného targetTemperature)
+            if mode == "HEAT":
+                # Pro vytápění: rozsah 16-30°C
+                temp_clamped = max(16, min(30, temp_int))
+                mode_info = "HEAT (16-30°C)"
+            elif mode in ["COOL", "AUTO", "AIR_DRY"]:
+                # Pro chlazení/auto/odvlhčování: rozsah 18-30°C
+                temp_clamped = max(18, min(30, temp_int))
+                mode_info = f"{mode} (18-30°C)"
             else:
-                # Fallback pro ostatní módy nebo když mód není specifikován
-                temp_clamped = max(18, min(30, temp_rounded))
-                temp_field = "targetTemperature"
+                # Fallback - obecný rozsah
+                temp_clamped = max(18, min(30, temp_int))
+                mode_info = f"{mode or 'DEFAULT'} (18-30°C)"
             
-            logger.info(f"Teplota: {temperature} -> zaokrouhleno: {temp_rounded} -> omezeno: {temp_clamped} (mód: {mode}, pole: {temp_field})")
+            logger.info(f"🌡️ TEPLOTA - Vstup: {temperature}")
+            logger.info(f"   ↳ Celé číslo: {temp_int} -> Omezeno: {temp_clamped}")
+            logger.info(f"   ↳ FUNGUJÍCÍ ŘEŠENÍ: Pouze targetTemperature jako number, bez režimu")
             
-            payload = {"temperature": {temp_field: temp_clamped}}
-            # Pokud je specifikován mód, přidáme jej také
-            if mode:
-                payload["airConJobMode"] = {"currentJobMode": mode}
+            # FUNGUJÍCÍ ŘEŠENÍ: Pouze teplota bez režimu
+            payload = {"temperature": {"targetTemperature": temp_clamped}}
+            
+            # NEBUDEME měnit režim současně - způsobuje problémy
+            # if mode:
+            #     payload["airConJobMode"] = {"currentJobMode": mode}
+                
+            logger.info(f"🔧 PAYLOAD: {json.dumps(payload, ensure_ascii=False)}")
             return payload
         
         elif command_type == "wind_strength":
