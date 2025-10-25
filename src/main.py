@@ -1,4 +1,4 @@
-
+# -*- coding: utf-8 -*-
 """
 Hlavní vstupní bod pro LG ThinQ klimatizační aplikaci.
 Podporuje jak CLI, tak GUI režim s pokročilými funkcemi včetně plánování.

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Logika pro vytváření příkazů a payloadů pro LG ThinQ klimatizaci.
 Obsahuje všechny typy kontrolních příkazů.

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 GUI aplikace pro ovládání LG klimatizace prostřednictvím ThinQ API.
 Poskytuje moderní tmavé rozhraní s responzivními prvky a pokročilým plánováním.
@@ -224,6 +225,16 @@ class ClimateApp(tk.Tk):
                     
                 payload = create_control_payload("power", new_state)
                 logger.info(f"Toggle power: {current_power} -> {new_state}")
+            
+            elif command == "power_on":
+                # NOVÝ: Vždy zajistit zapnutí (nemusíme kontrolovat stav)
+                payload = create_control_payload("power", "POWER_ON")
+                logger.info(f"Power ON příkaz")
+            
+            elif command == "power_off":
+                # NOVÝ: Vždy zajistit vypnutí
+                payload = create_control_payload("power", "POWER_OFF")
+                logger.info(f"Power OFF příkaz")
                 
             elif command == "change_mode":
                 mode = args[0]
@@ -304,8 +315,9 @@ class ClimateApp(tk.Tk):
         try:
             # Nejdříve zapnout zařízení (pokud je potřeba)
             if schedule_entry.power_on:
-                logger.info("  ↳ Zapínám zařízení")
-                self.handle_device_command("toggle_power")
+                logger.info("  ↳ Kontroluji stav a zapínám zařízení pokud je vypnuto")
+                # OPRAVA: Místo toggle_power použijeme power_on pro zajištění zapnutí
+                self.handle_device_command("power_on")
                 
                 # Počkat 3 sekundy, aby se zařízení zapnulo
                 def continue_after_power_on():
@@ -544,7 +556,7 @@ class ClimateApp(tk.Tk):
                         # Zkontroluj, jestli má plán vypnout zařízení na konci
                         if getattr(self.last_executed_schedule, 'power_off_at_end', True):
                             logger.info(f"🔚 Plán '{self.last_executed_schedule.name}' skončil - vypínám zařízení")
-                            self.handle_device_command("toggle_power")  # Vypnout zařízení
+                            self.handle_device_command("power_off")  # OPRAVA: Použít power_off místo toggle
                             self.status_var.set(f"Plán '{self.last_executed_schedule.name}' dokončen - zařízení vypnuto")
                         else:
                             logger.info(f"🔚 Plán '{self.last_executed_schedule.name}' skončil - zařízení zůstává zapnuté")

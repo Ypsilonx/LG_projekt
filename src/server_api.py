@@ -1,9 +1,11 @@
+# -*- coding: utf-8 -*-
 """
 API modul pro komunikaci s LG ThinQ službou.
 Optimalizovaná verze s caching a error handling.
 """
 import json
 import logging
+import asyncio
 import aiohttp
 from pathlib import Path
 from thinqconnect import ThinQApi
@@ -42,8 +44,11 @@ class ThinQAPI:
             )
         return self.api
     
-    async def get_device_status(self, device_id: str):
-        """Získání stavu zařízení s caching"""
+    async def get_device_status(self, device_id: str, retry_count=0):
+        """Získání stavu zařízení s caching a retry logikou pro 503 chyby"""
+        max_retries = 3
+        retry_delay = 2  # sekundy
+        
         try:
             api = await self.initialize()
             
@@ -67,8 +72,17 @@ class ThinQAPI:
             return status
             
         except Exception as e:
-            logger.error(f"Chyba při získávání stavu zařízení {device_id}: {e}")
-            raise
+            error_msg = str(e)
+            
+            # Zkontrolujeme, zda je to 503 chyba (server unavailable)
+            if "503" in error_msg and retry_count < max_retries:
+                retry_count += 1
+                logger.warning(f"⚠️ LG API nedostupné (503), pokus {retry_count}/{max_retries} za {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+                return await self.get_device_status(device_id, retry_count)
+            else:
+                logger.error(f"❌ Chyba při získávání stavu zařízení {device_id[:8]}...: {e}")
+                raise
     
     async def send_device_command(self, device_id: str, payload: dict):
         """Odeslání příkazu zařízení"""

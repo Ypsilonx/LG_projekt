@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Modul pro základní ovládací prvky klimatizace.
 Obsahuje widgety pro zapnutí/vypnutí, změnu módu, teploty, větru apod.

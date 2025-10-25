@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Modul pro správu a zobrazení plánovače klimatizace.
 Umožňuje vytváření časových plánů s různými režimy a nastaveními.
