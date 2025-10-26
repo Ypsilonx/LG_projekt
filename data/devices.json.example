@@ -1,0 +1,8 @@
+[
+  {
+    "device_id": "YOUR_DEVICE_ID_HERE",
+    "alias": "Living Room AC",
+    "type": "AIR_CONDITIONER",
+    "model_name": "Your AC Model"
+  }
+]

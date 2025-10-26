@@ -1,16 +1,19 @@
 # .gitignore pro LG_projekt
-.github/
+
 # Virtuální prostředí
 .venv/
 venv/
+env/
 
-# Soubory s tokeny a citlivými údaji
-*.json
-!device_profile.json
-!devices.json
+# Soubory s tokeny a citlivými údaji (ne šablony!)
+data/config.json
+data/devices.json
+data/schedule.json
+# Šablony NEJSOU ignorovány - .example soubory se commitnou
 
 # Nastavení editoru
 .vscode/
+.idea/
 
 # Dočasné a záložní soubory
 *.pyc
@@ -19,6 +22,7 @@ __pycache__/
 *.pyd
 *.bak
 *.swp
+*~
 
 # Logy
 *.log
@@ -30,3 +34,8 @@ __pycache__/
 # OS specifické
 .DS_Store
 Thumbs.db
+
+# Build/dist složky (pokud budete balíčkovat)
+build/
+dist/
+*.egg-info/

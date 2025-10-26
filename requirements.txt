@@ -15,7 +15,21 @@ propcache==0.3.2
 pycparser==2.22
 pyOpenSSL==25.1.0
 requests==2.32.4
-thinqconnect==1.0.7
+# LG ThinQ Climate Control - Python Dependencies
+# Python 3.12+ required
+
+# LG ThinQ API
+thinqconnect>=0.4.0
+
+# Asynchronous HTTP client
+aiohttp>=3.9.0
+
+# GUI framework (built-in, but listed for clarity)
+# tkinter is included with Python on most platforms
+# On Linux: sudo apt-get install python3-tk (Ubuntu/Debian)
+#          sudo dnf install python3-tkinter (Fedora)
+#          sudo pacman -S tk (Arch)
+==1.0.7
 typing_extensions==4.14.1
 urllib3==2.5.0
 yarl==1.20.1
