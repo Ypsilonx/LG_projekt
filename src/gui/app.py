@@ -426,7 +426,8 @@ class ClimateApp(tk.Tk):
             
         except Exception as e:
             logger.error(f"Chyba při aktualizaci stavu: {e}")
-            self.after(0, lambda: self.status_var.set(f"Chyba: {e}"))
+            error_msg = str(e)
+            self.after(0, lambda: self.status_var.set(f"Chyba: {error_msg}"))
             self.after(0, lambda: self.led_indicator.set_state("error"))
 
     async def manual_update_device_status(self):
@@ -445,7 +446,8 @@ class ClimateApp(tk.Tk):
             
         except Exception as e:
             logger.error(f"Chyba při manual refresh: {e}")
-            self.after(0, lambda: self.status_var.set(f"Chyba: {e}"))
+            error_msg = str(e)
+            self.after(0, lambda: self.status_var.set(f"Chyba: {error_msg}"))
             self.after(0, lambda: self.led_indicator.set_state("error"))
     
     def _update_gui_status(self, device_status):
