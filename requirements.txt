@@ -29,7 +29,8 @@ aiohttp>=3.9.0
 # On Linux: sudo apt-get install python3-tk (Ubuntu/Debian)
 #          sudo dnf install python3-tkinter (Fedora)
 #          sudo pacman -S tk (Arch)
-==1.0.7
+# ==1.0.7
+
 typing_extensions==4.14.1
 urllib3==2.5.0
 yarl==1.20.1
