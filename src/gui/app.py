@@ -13,6 +13,15 @@ from datetime import datetime
 from pathlib import Path
 import sys
 
+# ============================================================================
+# KONFIGURACE INTERVALŮ API DOTAZŮ
+# ============================================================================
+# Poznámka: LG ThinQ API má rate limit - příliš časté dotazy mohou být odmítnuty
+# Pro okamžitou aktualizaci použijte tlačítko "🔄 Aktualizovat"
+STATUS_CHECK_INTERVAL = 300000   # Kontrola stavu zařízení (ms) - 300s = 5 minut
+SCHEDULE_CHECK_INTERVAL = 30000  # Kontrola spuštění plánovaných úkolů (ms) - 30s
+# ============================================================================
+
 # Import modulů aplikace
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from server_api import ThinQAPI, send_device_command
@@ -45,7 +54,7 @@ class ClimateApp(tk.Tk):
         self.api = None
         self.device_profile = self.load_device_profile()
         self.last_device_status = None
-        self.status_check_interval = 5000  # 5 sekund
+        self.status_check_interval = STATUS_CHECK_INTERVAL
         self.pending_update = False
         
         # Status variable pro globální stav
@@ -584,9 +593,9 @@ class ClimateApp(tk.Tk):
         except Exception as e:
             logger.error(f"Chyba při kontrole plánů: {e}")
         
-        # Naplánuj další kontrolu za 30 sekund
+        # Naplánuj další kontrolu
         if self.schedule_check_active:
-            self.after(30000, self.periodic_schedule_check)  # 30 sekund
+            self.after(SCHEDULE_CHECK_INTERVAL, self.periodic_schedule_check)
     
     def _calculate_remaining_time(self, schedule_entry, current_time):
         """Výpočet zbývajícího času aktivního plánu"""

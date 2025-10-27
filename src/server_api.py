@@ -44,11 +44,8 @@ class ThinQAPI:
             )
         return self.api
     
-    async def get_device_status(self, device_id: str, retry_count=0):
-        """Získání stavu zařízení s caching a retry logikou pro 503 chyby"""
-        max_retries = 3
-        retry_delay = 2  # sekundy
-        
+    async def get_device_status(self, device_id: str):
+        """Získání stavu zařízení s caching (bez agresivního retry)"""
         try:
             api = await self.initialize()
             
@@ -72,17 +69,10 @@ class ThinQAPI:
             return status
             
         except Exception as e:
-            error_msg = str(e)
-            
-            # Zkontrolujeme, zda je to 503 chyba (server unavailable)
-            if "503" in error_msg and retry_count < max_retries:
-                retry_count += 1
-                logger.warning(f"⚠️ LG API nedostupné (503), pokus {retry_count}/{max_retries} za {retry_delay}s...")
-                await asyncio.sleep(retry_delay)
-                return await self.get_device_status(device_id, retry_count)
-            else:
-                logger.error(f"❌ Chyba při získávání stavu zařízení {device_id[:8]}...: {e}")
-                raise
+            # Při jakékoliv chybě (včetně 503) to prostě selže
+            # Periodická kontrola to zkusí znovu za 5 minut (STATUS_CHECK_INTERVAL)
+            logger.error(f"❌ Chyba API: {e} - další pokus za 5 minut (automatická kontrola)")
+            raise
     
     async def send_device_command(self, device_id: str, payload: dict):
         """Odeslání příkazu zařízení"""
