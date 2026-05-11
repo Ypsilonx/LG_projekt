@@ -147,8 +147,13 @@ class ThinQAPI:
             logger.error(f"❌ Chyba při MQTT inicializaci: {e}")
             return False
 
-    def _on_mqtt_connected(self, connection, return_code, session_present, **kwargs):
-        """Callback: MQTT úspěšně připojeno."""
+    def _on_mqtt_connected(self, connection, callback_data, **kwargs):
+        """Callback: MQTT úspěšně připojeno.
+
+        AWS CRT SDK předává (connection, callback_data) kde callback_data
+        obsahuje atributy return_code a session_present.
+        """
+        session_present = getattr(callback_data, "session_present", False)
         logger.info(f"📡 MQTT spojení navázáno (session_present={session_present})")
 
     def _on_mqtt_interrupted(self, connection, error, **kwargs):
