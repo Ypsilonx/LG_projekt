@@ -1,36 +1,25 @@
-aiohappyeyeballs==2.6.1
+# LG ThinQ Climate Control – závislosti
+# Python 3.12+ required
+# Generováno: pip freeze (klíčové balíčky)
+
+# LG ThinQ API + MQTT klient (zahrnuje awscrt a awsiotsdk)
+thinqconnect==1.0.7
+
+# Asynchronní HTTP klient (vyžadován thinqconnect i server_api.py)
 aiohttp==3.12.15
-aiosignal==1.4.0
-attrs==25.3.0
+
+# AWS IoT SDK pro MQTT (nainstalováno automaticky s thinqconnect)
 awscrt==0.27.4
 awsiotsdk==1.24.0
-certifi==2025.8.3
-cffi==1.17.1
-charset-normalizer==3.4.3
+
+# TLS a kryptografie (vyžadováno pro MQTT certifikáty)
 cryptography==45.0.6
-frozenlist==1.7.0
-idna==3.10
-multidict==6.6.3
-propcache==0.3.2
-pycparser==2.22
 pyOpenSSL==25.1.0
+
+# HTTP klient pro zpětnou kompatibilitu (frontend.py)
 requests==2.32.4
-# LG ThinQ Climate Control - Python Dependencies
-# Python 3.12+ required
 
-# LG ThinQ API
-thinqconnect>=0.4.0
-
-# Asynchronous HTTP client
-aiohttp>=3.9.0
-
-# GUI framework (built-in, but listed for clarity)
-# tkinter is included with Python on most platforms
-# On Linux: sudo apt-get install python3-tk (Ubuntu/Debian)
-#          sudo dnf install python3-tkinter (Fedora)
-#          sudo pacman -S tk (Arch)
-# ==1.0.7
-
-typing_extensions==4.14.1
-urllib3==2.5.0
-yarl==1.20.1
+# Poznámka: tkinter je součástí standardní knihovny Python.
+# Na Linuxu: sudo apt-get install python3-tk (Ubuntu/Debian)
+#            sudo dnf install python3-tkinter (Fedora)
+#            sudo pacman -S tk (Arch)

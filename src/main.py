@@ -43,8 +43,9 @@ def main():
             parser.print_help()
 
 def run_cli():
-    """Spuštění CLI režimu (zpětná kompatibilita)"""
+    """Spuštění interaktivního CLI režimu (zpětná kompatibilita)."""
     import frontend
+    asyncio.run(frontend.main())
 
 def run_gui():
     """Spuštění GUI režimu"""

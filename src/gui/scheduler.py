@@ -49,18 +49,25 @@ class ScheduleEntry:
             return 2.0  # Výchozí 2 hodiny
         
     def _calculate_end_time_from_duration(self, duration_hours: float) -> str:
-        """Výpočet end_time z start_time a duration"""
+        """
+        Vypočítá end_time z start_time a délky trvání.
+
+        Args:
+            duration_hours: Délka trvání v hodinách (může být desetinné číslo)
+
+        Returns:
+            str: Čas konce ve formátu HH:MM
+        """
         try:
+            from datetime import timedelta
             start = datetime.strptime(self.start_time, "%H:%M")
-            end = start.replace(hour=start.hour + int(duration_hours), 
-                              minute=start.minute + int((duration_hours % 1) * 60))
-            
-            # Handle překročení 24h
-            if end.hour >= 24:
-                end = end.replace(hour=end.hour - 24)
-            
-            return end.strftime("%H:%M")
-        except:
+            total_minutes = int(duration_hours * 60)
+            # timedelta zvládne přechod přes půlnoc bez ValueError
+            end = (start + timedelta(minutes=total_minutes))
+            # Oříznutí na rozsah 0-23h pomocí modulo (přes půlnoc)
+            end_minutes_total = (start.hour * 60 + start.minute + total_minutes) % (24 * 60)
+            return f"{end_minutes_total // 60:02d}:{end_minutes_total % 60:02d}"
+        except Exception:
             return "10:00"
     
     def to_dict(self) -> Dict[str, Any]:
