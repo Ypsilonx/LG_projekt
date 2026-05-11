@@ -119,6 +119,38 @@ class ThinQAPI:
         logger.info("API připojení uzavřeno")
 
 # Zpětná kompatibilita s původním API
+def get_ac_device_id() -> str:
+    """
+    Načte Device ID klimatizace z data/devices.json.
+    Hledá první zařízení typu DEVICE_AIR_CONDITIONER.
+
+    Returns:
+        str: Device ID klimatizace
+
+    Raises:
+        ValueError: Pokud klimatizace v souboru nebyla nalezena
+        FileNotFoundError: Pokud soubor devices.json neexistuje
+    """
+    devices_path = Path(__file__).parent.parent / "data" / "devices.json"
+    try:
+        with open(devices_path, "r", encoding="utf-8") as f:
+            devices = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Soubor {devices_path} nenalezen. "
+            "Spusťte 'python setup.py' a vyplňte data/devices.json."
+        )
+
+    for device in devices:
+        if device.get("deviceInfo", {}).get("deviceType") == "DEVICE_AIR_CONDITIONER":
+            return device["deviceId"]
+
+    raise ValueError(
+        "Klimatizace (DEVICE_AIR_CONDITIONER) nebyla nalezena v devices.json. "
+        "Zkontrolujte obsah souboru."
+    )
+
+
 async def get_api():
     """Zpětně kompatibilní funkce pro získání API instance"""
     api_instance = ThinQAPI()

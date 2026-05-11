@@ -10,6 +10,7 @@ from pathlib import Path
 
 # Zajistíme, že Python najde naše moduly
 sys.path.insert(0, str(Path(__file__).parent))
+from server_api import get_ac_device_id
 
 def main():
     """Hlavní funkce aplikace"""
@@ -63,9 +64,9 @@ async def cli_show_status(device_id=None):
         api = ThinQAPI()
         await api.initialize()
         
-        # Použití výchozího device_id, pokud není zadáno
+        # Použití výchozího device_id načteného z devices.json
         if not device_id:
-            device_id = "ef279add7b418795378e9d20631cd85d86aa5e356a7e4599584434c4ead89c4e"
+            device_id = get_ac_device_id()
             
         status = await api.get_device_status(device_id)
         
@@ -96,7 +97,7 @@ async def cli_execute_command(device_id, command):
         await api.initialize()
         
         if not device_id:
-            device_id = "ef279add7b418795378e9d20631cd85d86aa5e356a7e4599584434c4ead89c4e"
+            device_id = get_ac_device_id()
         
         # Parsing příkazů
         if command.lower() == "power_on":

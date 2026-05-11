@@ -24,7 +24,7 @@ SCHEDULE_CHECK_INTERVAL = 30000  # Kontrola spuštění plánovaných úkolů (m
 
 # Import modulů aplikace
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from server_api import ThinQAPI, send_device_command
+from server_api import ThinQAPI, send_device_command, get_ac_device_id
 from klima_logic import create_control_payload
 from gui.theme import setup_dark_theme
 from gui.widgets import LEDIndicator
@@ -34,8 +34,6 @@ from gui.scheduler import SchedulerWidget
 # Nastavení logování
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-DEVICE_ID = "ef279add7b418795378e9d20631cd85d86aa5e356a7e4599584434c4ead89c4e"
 
 class ClimateApp(tk.Tk):
     """Hlavní aplikace pro ovládání klimatizace"""
@@ -52,6 +50,13 @@ class ClimateApp(tk.Tk):
         
         # Inicializace API a dat
         self.api = None
+        try:
+            self.device_id = get_ac_device_id()
+        except Exception as e:
+            logger.error(f"Nelze načíst Device ID: {e}")
+            messagebox.showerror("Chyba konfigurace", str(e))
+            self.destroy()
+            return
         self.device_profile = self.load_device_profile()
         self.last_device_status = None
         self.status_check_interval = STATUS_CHECK_INTERVAL
@@ -221,7 +226,7 @@ class ClimateApp(tk.Tk):
             
             if command == "toggle_power":
                 # Nejprve získáme aktuální stav
-                status = await api.get_device_status(DEVICE_ID)
+                status = await api.get_device_status(self.device_id)
                 
                 # Podle device_profile.json: operation.airConOperationMode pro power stav
                 current_power = status.get("operation", {}).get("airConOperationMode", "POWER_OFF")
@@ -278,7 +283,7 @@ class ClimateApp(tk.Tk):
                 return
             
             # Odeslání příkazu
-            result = await api.send_device_command(DEVICE_ID, payload)
+            result = await api.send_device_command(self.device_id, payload)
             logger.info(f"Příkaz {command} úspěšně odeslán: {result}")
             
             # Pro nastavení teploty čekáme delší dobu na aktualizaci
@@ -422,7 +427,7 @@ class ClimateApp(tk.Tk):
         """Aktualizace stavu zařízení"""
         try:
             api = await self.initialize_api()
-            status = await api.get_device_status(DEVICE_ID)
+            status = await api.get_device_status(self.device_id)
             
             # Kontrola změn ve stavu
             if status != self.last_device_status:
@@ -443,7 +448,7 @@ class ClimateApp(tk.Tk):
         """Speciální verze update_device_status pro manual refresh - vždycky aktualizuje GUI"""
         try:
             api = await self.initialize_api()
-            status = await api.get_device_status(DEVICE_ID)
+            status = await api.get_device_status(self.device_id)
             
             # Při manual refresh VŽDYCKY aktualizujeme GUI, i když se stav nezměnil
             self.last_device_status = status
