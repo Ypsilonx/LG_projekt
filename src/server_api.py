@@ -240,6 +240,85 @@ class ThinQAPI:
             logger.error(f"❌ Chyba při načítání seznamu zařízení: {e}")
             raise
 
+    async def get_device_profile(self, device_id: str) -> dict:
+        """
+        Načte profil zařízení přes GET /devices/{deviceId}/profile.
+
+        Profil popisuje dostupné vlastnosti, jejich povolené hodnoty
+        a možnosti ovládání. Pokrývá aktuální stav firmware zařízení.
+
+        Args:
+            device_id: ID zařízení
+
+        Returns:
+            dict: Profil zařízení
+
+        Raises:
+            Exception: Při chybě komunikace s API
+        """
+        api = await self.initialize()
+        try:
+            profile = await api.async_get_device_profile(device_id)
+            logger.info(f"📋 Profil zařízení stažen z API ({device_id[:8]}...)")
+            return profile
+        except Exception as e:
+            logger.error(f"❌ Chyba při načítání profilu zařízení: {e}")
+            raise
+
+    async def get_energy_usage(
+        self,
+        device_id: str,
+        period: str = "DAILY",
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict]:
+        """
+        Načte data o spotřebě energie přes GET /devices/energy/{deviceId}/usage.
+
+        Energy API není součástí thinqconnect – volá se přímo přes aiohttp session.
+        Podporované periody: DAILY (až 31 dní, formát YYYYMMDD),
+                             MONTHLY (až 12 měsíců, formát YYYYMM).
+
+        Args:
+            device_id: ID zařízení
+            period: "DAILY" nebo "MONTHLY"
+            start_date: Počáteční datum (výchozí: 7 dní zpět pro DAILY)
+            end_date: Koncové datum (výchozí: dnes)
+
+        Returns:
+            list[dict]: Seznam záznamů [{"usedDate": "20260511", "energyUsage": 508}, ...]
+                        Hodnoty energyUsage jsou v jednotkách Wh.
+
+        Raises:
+            Exception: Při chybě komunikace nebo pokud zařízení energy nepodporuje
+        """
+        from datetime import date, timedelta
+
+        if end_date is None:
+            end_date = date.today().strftime("%Y%m%d" if period == "DAILY" else "%Y%m")
+        if start_date is None:
+            if period == "DAILY":
+                start_date = (date.today() - timedelta(days=6)).strftime("%Y%m%d")
+            else:
+                start_date = (date.today().replace(day=1) - timedelta(days=365 // 12)).strftime("%Y%m")
+
+        # Musíme volat přímo přes session – thinqconnect energy API nepodporuje
+        api = await self.initialize()
+        url = api._get_url_from_endpoint(f"devices/energy/{device_id}/usage")
+        headers = api._generate_headers()
+        params = {"period": period, "startDate": start_date, "endDate": end_date}
+
+        try:
+            async with self._session.get(url, headers=headers, params=params) as resp:
+                resp.raise_for_status()
+                body = await resp.json()
+            data_list = body.get("response", {}).get("result", {}).get("dataList", [])
+            logger.info(f"⚡ Energy usage načteno: {len(data_list)} záznamů ({period})")
+            return data_list
+        except Exception as e:
+            logger.error(f"❌ Chyba při načítání energy usage: {e}")
+            raise
+
     # ------------------------------------------------------------------
     # Čistý shutdown
     # ------------------------------------------------------------------

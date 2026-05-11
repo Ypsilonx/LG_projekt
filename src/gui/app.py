@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from server_api import ThinQAPI, send_device_command, get_ac_device_id
 from klima_logic import create_control_payload
 from gui.theme import setup_dark_theme
-from gui.widgets import LEDIndicator
+from gui.widgets import LEDIndicator, EnergyPanel
 from gui.controls import ClimateControls, TimerControls, InfoPanel
 from gui.scheduler import SchedulerWidget
 
@@ -83,13 +83,45 @@ class ClimateApp(tk.Tk):
         self.periodic_schedule_check()
         
     def load_device_profile(self):
-        """Načtení profilu zařízení"""
+        """
+        Načte profil zařízení – nejdříve zkusí stáhnout z API,
+        při selhání použije lokální zálohu data/device_profile.json.
+
+        Stažený profil se automaticky uloží jako záloha pro případ výpadku sítě.
+        """
+        profile_path = Path(__file__).parent.parent.parent / "data" / "device_profile.json"
+
+        # Pokus o stažení z API (spustíme na nové event loop – main loop ještě neběží)
         try:
-            profile_path = Path(__file__).parent.parent.parent / "data" / "device_profile.json"
+            from server_api import ThinQAPI as _ThinQAPI
+
+            async def _fetch_profile():
+                _api = _ThinQAPI()
+                try:
+                    return await _api.get_device_profile(self.device_id)
+                finally:
+                    await _api.close()
+
+            profile = asyncio.run(_fetch_profile())
+            if profile:
+                # Uložit jako zálohu pro případ výpadku sítě při příštím spuštění
+                try:
+                    with open(profile_path, "w", encoding="utf-8") as f:
+                        json.dump(profile, f, ensure_ascii=False, indent=2)
+                    logger.info("💾 Profil zařízení uložen jako lokální záloha")
+                except Exception as save_err:
+                    logger.warning(f"Nelze uložit zálohu profilu: {save_err}")
+                return profile
+        except Exception as e:
+            logger.warning(f"Nelze stáhnout profil z API: {e} – používám lokální zálohu")
+
+        # Fallback: lokální záloha
+        try:
             with open(profile_path, "r", encoding="utf-8") as f:
+                logger.info("📂 Profil zařízení načten z lokální zálohy")
                 return json.load(f)
         except Exception as e:
-            logger.error(f"Chyba při načítání profilu zařízení: {e}")
+            logger.error(f"Nelze načíst zálohu profilu: {e}")
             messagebox.showerror("Chyba", f"Nelze načíst profil zařízení: {e}")
             return {}
     
@@ -137,7 +169,14 @@ class ClimateApp(tk.Tk):
         # Informační panel
         self.info_panel = InfoPanel(self.scrollable_frame)
         self.info_panel.pack(pady=10, padx=10, fill='x')
-        
+
+        # Panel spotřeby energie
+        self.energy_panel = EnergyPanel(
+            self.scrollable_frame,
+            on_refresh=self.refresh_energy_data,
+        )
+        self.energy_panel.pack(pady=10, padx=10, fill='x')
+
         # Plánovač (nová funkce)
         if self.device_profile:
             modes = self.device_profile.get("property", {}).get("airConJobMode", {}).get("currentJobMode", {}).get("value", {}).get("w", ["AUTO", "COOL", "HEAT", "FAN"])
@@ -766,7 +805,28 @@ class ClimateApp(tk.Tk):
             logger.error(f"Chyba při manuálním refresh: {e}")
             self.status_var.set(f"Chyba refresh: {e}")
             self.led_indicator.set_state("error")
-    
+
+    def refresh_energy_data(self):
+        """
+        Spustí asynchronní načtení dat spotřeby energie a aktualizuje EnergyPanel.
+        Voláno z EnergyPanel při stisku tlačítka Aktualizovat.
+        """
+        self.energy_panel.show_loading()
+
+        async def _fetch():
+            return await self.api.get_energy_usage(self.device_id)
+
+        def _done(future):
+            try:
+                data_list = future.result()
+                self.after(0, lambda: self.energy_panel.update_data(data_list))
+            except Exception as e:
+                logger.error(f"❌ Chyba při načítání energy dat: {e}")
+                self.after(0, lambda: self.energy_panel.show_error(str(e)))
+
+        future = asyncio.run_coroutine_threadsafe(_fetch(), self.loop)
+        future.add_done_callback(_done)
+
     def on_closing(self):
         """Čištění při zavírání aplikace – čeká na uzavření MQTT a HTTP session."""
         self.schedule_check_active = False
