@@ -14,11 +14,11 @@ from pathlib import Path
 import sys
 
 # ============================================================================
-# KONFIGURACE INTERVALŮ API DOTAZŮ
+# KONFIGURACE
 # ============================================================================
-# Poznámka: LG ThinQ API má rate limit - příliš časté dotazy mohou být odmítnuty
-# Pro okamžitou aktualizaci použijte tlačítko "🔄 Aktualizovat"
-STATUS_CHECK_INTERVAL = 300000   # Kontrola stavu zařízení (ms) - 300s = 5 minut
+# MQTT real-time stream je primární zdroj aktualizací stavu.
+# HTTP polling je zachován pouze jako záloha (tlačítko Aktualizovat)
+# a pro počáteční načtení stavu při spuštění.
 SCHEDULE_CHECK_INTERVAL = 30000  # Kontrola spuštění plánovaných úkolů (ms) - 30s
 # ============================================================================
 
@@ -59,8 +59,8 @@ class ClimateApp(tk.Tk):
             return
         self.device_profile = self.load_device_profile()
         self.last_device_status = None
-        self.status_check_interval = STATUS_CHECK_INTERVAL
         self.pending_update = False
+        self._mqtt_active = False  # True pokud MQTT stream běží
         
         # Status variable pro globální stav
         self.status_var = tk.StringVar(value="Načítám stav zařízení...")
@@ -72,11 +72,8 @@ class ClimateApp(tk.Tk):
         # Vytvoření GUI
         self.create_widgets()
         
-        # Spuštění počáteční kontroly stavu
+        # Spuštění počáteční kontroly stavu + MQTT
         self.after(100, self.initial_status_check)
-        
-        # Pravidelná kontrola stavu
-        self.periodic_status_check()
         
         # Pravidelná kontrola plánů (každou minutu)
         self.schedule_check_active = True
@@ -88,7 +85,8 @@ class ClimateApp(tk.Tk):
     def load_device_profile(self):
         """Načtení profilu zařízení"""
         try:
-            with open("data/device_profile.json", "r", encoding="utf-8") as f:
+            profile_path = Path(__file__).parent.parent.parent / "data" / "device_profile.json"
+            with open(profile_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Chyba při načítání profilu zařízení: {e}")
@@ -509,18 +507,67 @@ class ClimateApp(tk.Tk):
             self.status_var.set(f"Chyba GUI: {e}")
     
     def initial_status_check(self):
-        """Počáteční kontrola stavu"""
-        asyncio.run_coroutine_threadsafe(self.update_device_status(), self.loop)
-    
-    def periodic_status_check(self):
-        """Pravidelná kontrola stavu"""
-        if not self.pending_update:
-            self.pending_update = True
-            asyncio.run_coroutine_threadsafe(self.update_device_status(), self.loop)
-            self.after(500, lambda: setattr(self, 'pending_update', False))
-        
-        # Plánování další kontroly
-        self.after(self.status_check_interval, self.periodic_status_check)
+        """Počáteční načtení stavu a spuštění MQTT streamu."""
+        asyncio.run_coroutine_threadsafe(self._initial_connect(), self.loop)
+
+    async def _initial_connect(self):
+        """
+        Inicializuje API, načte počáteční stav zařízení a pokusí se
+        připojit MQTT pro real-time aktualizace.
+        """
+        # Krok 1: jednorázové načtení stavu přes HTTP
+        await self.update_device_status()
+
+        # Krok 2: spuštění MQTT real-time streamu
+        api = await self.initialize_api()
+        self.after(0, lambda: self.status_var.set(
+            self.status_var.get() + " | Připojuji MQTT..."
+        ))
+        success = await api.connect_mqtt(on_message=self._on_mqtt_message)
+        self._mqtt_active = success
+
+        if success:
+            logger.info("✅ MQTT stream aktivní – polling deaktivován")
+            self.after(0, self._update_mqtt_status_indicator)
+        else:
+            logger.warning("⚠️ MQTT nepřipojeno – záloha: ruční aktualizace tlačítkem")
+            self.after(0, lambda: self.status_var.set(
+                self.status_var.get().replace(" | Připojuji MQTT...", "") +
+                " | MQTT nedostupné"
+            ))
+
+    def _on_mqtt_message(self, topic, payload, dup, qos, retain, **kwargs):
+        """
+        Callback volaný při každé MQTT zprávě ze zařízení.
+        Běží v AWS SDK vlákně – přepne do hlavního GUI vlákna přes after().
+
+        Args:
+            topic: MQTT topic zprávy
+            payload: Slovník se stavem zařízení
+        """
+        logger.debug(f"📡 MQTT zpráva: topic={topic}")
+        try:
+            # MQTT payload může být bytes nebo dict
+            if isinstance(payload, (bytes, bytearray)):
+                data = json.loads(payload.decode("utf-8"))
+            else:
+                data = payload
+
+            # Extrahovat stav zařízení z event obálky
+            device_status = data.get("event", {}).get("push", data)
+
+            if device_status:
+                self.last_device_status = device_status
+                # GUI aktualizace musí proběhnout v hlavním vlákně
+                self.after(0, lambda s=device_status: self._update_gui_status(s))
+                logger.info("📡 MQTT: GUI aktualizováno ze real-time zprávy")
+        except Exception as e:
+            logger.error(f"Chyba při zpracování MQTT zprávy: {e}")
+
+    def _update_mqtt_status_indicator(self):
+        """Aktualizuje status bar aby zobrazoval MQTT stav."""
+        current = self.status_var.get().replace(" | Připojuji MQTT...", "")
+        self.status_var.set(current)
 
     def periodic_schedule_check(self):
         """Pravidelná kontrola plánů pro automatické spouštění"""
