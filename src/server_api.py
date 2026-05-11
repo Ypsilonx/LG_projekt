@@ -1,124 +1,270 @@
 # -*- coding: utf-8 -*-
 """
 API modul pro komunikaci s LG ThinQ službou.
-Optimalizovaná verze s caching a error handling.
+Poskytuje HTTP přístup ke stavu a ovládání zařízení a real-time
+MQTT stream pro okamžité notifikace o změnách stavu bez pollingu.
 """
 import json
 import logging
 import asyncio
 import aiohttp
 from pathlib import Path
-from thinqconnect import ThinQApi
+from typing import Callable, Optional
+from thinqconnect import ThinQApi, ThinQMQTTClient
 
-# Nastavení logování
 logger = logging.getLogger(__name__)
 
+
 class ThinQAPI:
-    """ThinQ API wrapper s caching a error handling"""
-    
+    """
+    Wrapper nad ThinQ API s podporou HTTP příkazů i real-time MQTT streamu.
+
+    Životní cyklus:
+        1. initialize()      – vytvoří HTTP session a ThinQApi objekt
+        2. connect_mqtt()    – připojí MQTT pro real-time notifikace (volitelné)
+        3. get_device_status() / send_device_command() – HTTP operace
+        4. close()           – čistě odpojí MQTT i HTTP session
+    """
+
     def __init__(self):
-        self.api = None
-        self.session = None
-        self.config = self.load_config()
-        self.device_cache = {}
-        
-    def load_config(self):
-        """Načtení konfigurace z config.json"""
+        self._api: Optional[ThinQApi] = None
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._mqtt: Optional[ThinQMQTTClient] = None
+        self.config = self._load_config()
+
+    # ------------------------------------------------------------------
+    # Konfigurace
+    # ------------------------------------------------------------------
+
+    def _load_config(self) -> dict:
+        """
+        Načte konfiguraci z data/config.json.
+
+        Returns:
+            dict: Konfigurační data (access_token, country_code, client_id)
+
+        Raises:
+            FileNotFoundError: Pokud config.json neexistuje
+            KeyError: Pokud chybí povinný klíč
+        """
+        config_path = Path(__file__).parent.parent / "data" / "config.json"
         try:
-            config_path = Path(__file__).parent.parent / "data" / "config.json"
             with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Chyba při načítání konfigurace: {e}")
-            raise
-    
-    async def initialize(self):
-        """Inicializace API připojení"""
-        if not self.api:
-            self.session = aiohttp.ClientSession()
-            self.api = ThinQApi(
+                config = json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Konfigurační soubor {config_path} nenalezen. "
+                "Zkopírujte data/config.json.example a vyplňte přihlašovací údaje."
+            )
+
+        for key in ("access_token", "country_code", "client_id"):
+            if not config.get(key) or config[key].startswith("YOUR_"):
+                raise ValueError(
+                    f"Chybí nebo nevyplněná hodnota '{key}' v config.json."
+                )
+        return config
+
+    # ------------------------------------------------------------------
+    # HTTP inicializace
+    # ------------------------------------------------------------------
+
+    async def initialize(self) -> ThinQApi:
+        """
+        Inicializuje HTTP session a ThinQApi objekt (idempotentní).
+
+        Returns:
+            ThinQApi: Inicializovaný API objekt
+        """
+        if self._api is None:
+            self._session = aiohttp.ClientSession()
+            # Správné pořadí parametrů: session, access_token, country_code, client_id
+            self._api = ThinQApi(
+                session=self._session,
                 access_token=self.config["access_token"],
                 country_code=self.config["country_code"],
                 client_id=self.config["client_id"],
-                session=self.session
             )
-        return self.api
-    
-    async def get_device_status(self, device_id: str):
-        """Získání stavu zařízení s caching (bez agresivního retry)"""
+        return self._api
+
+    # ------------------------------------------------------------------
+    # MQTT real-time stream
+    # ------------------------------------------------------------------
+
+    async def connect_mqtt(self, on_message: Callable) -> bool:
+        """
+        Připojí MQTT klienta pro real-time notifikace o změnách stavu.
+
+        Postup dle ThinQ API specifikace:
+            1. GET /route              – zjistí adresu MQTT brokeru
+            2. POST /client            – registrace klienta
+            3. POST /client/certificate – vydání AWS IoT certifikátu
+            4. Připojení na MQTT broker přes mTLS
+
+        Po úspěšném připojení je `on_message` voláno při každé změně
+        stavu zařízení – bez jakéhokoliv pollingu.
+
+        Args:
+            on_message: Callback volaný při příchodu MQTT zprávy.
+                        Signatura: on_message(topic: str, payload: dict, dup: bool,
+                                              qos: int, retain: bool, **kwargs)
+
+        Returns:
+            bool: True pokud se připojení zdařilo, False jinak
+        """
+        api = await self.initialize()
+
         try:
-            api = await self.initialize()
-            
-            # V synchronní verzi thinqconnect používáme get_device_status
-            if hasattr(api, 'async_get_device_status'):
-                status = await api.async_get_device_status(device_id)
+            self._mqtt = ThinQMQTTClient(
+                thinq_api=api,
+                client_id=self.config["client_id"],
+                on_message_received=on_message,
+                on_connection_interrupted=self._on_mqtt_interrupted,
+                on_connection_success=self._on_mqtt_connected,
+                on_connection_failure=self._on_mqtt_failure,
+                on_connection_closed=self._on_mqtt_closed,
+            )
+
+            # Krok 1: zjistit adresu MQTT serveru přes GET /route
+            await self._mqtt.async_init()
+
+            # Krok 2+3: registrace klienta + získání AWS IoT certifikátu
+            prepared = await self._mqtt.async_prepare_mqtt()
+            if not prepared:
+                logger.error("❌ MQTT příprava selhala (certifikát nebo registrace)")
+                return False
+
+            # Krok 4: připojení na MQTT broker
+            await self._mqtt.async_connect_mqtt()
+
+            if self._mqtt.is_connected:
+                logger.info("✅ MQTT připojeno – real-time notifikace aktivní")
+                return True
             else:
-                # Fallback pro synchronní verzi
-                status = api.get_device_status(device_id)
-            
-            # Cache pro porovnání změn
-            if device_id in self.device_cache:
-                if status == self.device_cache[device_id]:
-                    logger.debug(f"Stav zařízení {device_id[:8]}... nezměněn")
-                else:
-                    logger.info(f"📋 Stav zařízení aktualizován")
-            else:
-                logger.info(f"📋 První načtení stavu zařízení")
-            
-            self.device_cache[device_id] = status
-            return status
-            
+                logger.error("❌ MQTT připojení neproběhlo")
+                return False
+
         except Exception as e:
-            # Při jakékoliv chybě (včetně 503) to prostě selže
-            # Periodická kontrola to zkusí znovu za 5 minut (STATUS_CHECK_INTERVAL)
-            logger.error(f"❌ Chyba API: {e} - další pokus za 5 minut (automatická kontrola)")
-            raise
-    
-    async def send_device_command(self, device_id: str, payload: dict):
-        """Odeslání příkazu zařízení"""
+            logger.error(f"❌ Chyba při MQTT inicializaci: {e}")
+            return False
+
+    def _on_mqtt_connected(self, connection, return_code, session_present, **kwargs):
+        """Callback: MQTT úspěšně připojeno."""
+        logger.info(f"📡 MQTT spojení navázáno (session_present={session_present})")
+
+    def _on_mqtt_interrupted(self, connection, error, **kwargs):
+        """Callback: MQTT spojení přerušeno – AWS SDK se automaticky pokusí znovu."""
+        logger.warning(f"⚠️ MQTT přerušeno: {error} – pokus o reconnect...")
+
+    def _on_mqtt_failure(self, connection, callback_data, **kwargs):
+        """Callback: MQTT připojení selhalo."""
+        logger.error(f"❌ MQTT selhalo: {callback_data}")
+
+    def _on_mqtt_closed(self, **kwargs):
+        """Callback: MQTT spojení ukončeno."""
+        logger.info("🔌 MQTT odpojeno")
+
+    @property
+    def mqtt_connected(self) -> bool:
+        """Vrací True pokud je MQTT aktivní."""
+        return self._mqtt is not None and self._mqtt.is_connected
+
+    # ------------------------------------------------------------------
+    # HTTP operace se zařízeními
+    # ------------------------------------------------------------------
+
+    async def get_device_status(self, device_id: str) -> dict:
+        """
+        Získá aktuální stav zařízení přes HTTP GET /devices/{deviceId}/state.
+
+        Používá se pro počáteční načtení stavu a po odeslání příkazu.
+        Za normálního provozu jsou aktualizace doručovány přes MQTT.
+
+        Args:
+            device_id: ID zařízení
+
+        Returns:
+            dict: Aktuální stav zařízení
+
+        Raises:
+            Exception: Při chybě komunikace s API
+        """
+        api = await self.initialize()
         try:
-            api = await self.initialize()
-            
-            logger.info(f"📤 API příkaz: {json.dumps(payload, ensure_ascii=False)}")
-            
-            if hasattr(api, 'async_post_device_control'):
-                result = await api.async_post_device_control(device_id, payload)
-            else:
-                # Fallback pro synchronní verzi
-                result = api.post_device_control(device_id, payload)
-            
-            logger.info(f"📥 API odpověď: {result}")
+            status = await api.async_get_device_status(device_id)
+            logger.debug(f"📋 Stav načten pro {device_id[:8]}...")
+            return status
+        except Exception as e:
+            logger.error(f"❌ Chyba při načítání stavu: {e}")
+            raise
+
+    async def send_device_command(self, device_id: str, payload: dict) -> dict:
+        """
+        Odešle řídicí příkaz zařízení přes HTTP POST /devices/{deviceId}/control.
+
+        Args:
+            device_id: ID zařízení
+            payload: Řídicí příkaz (viz klima_logic.py)
+
+        Returns:
+            dict: Odpověď API
+
+        Raises:
+            Exception: Při chybě komunikace nebo odmítnutí příkazu
+        """
+        api = await self.initialize()
+        try:
+            logger.info(f"📤 Příkaz → {device_id[:8]}...: {json.dumps(payload, ensure_ascii=False)}")
+            result = await api.async_post_device_control(device_id, payload)
+            logger.info(f"📥 Odpověď: {result}")
             return result
-            
         except Exception as e:
             logger.error(f"❌ Chyba při odesílání příkazu: {e}")
             raise
-    
-    async def get_devices(self):
-        """Získání seznamu zařízení"""
-        try:
-            api = await self.initialize()
-            
-            if hasattr(api, 'async_get_devices'):
-                devices = await api.async_get_devices()
-            else:
-                devices = api.get_devices()
-            
-            return devices
-            
-        except Exception as e:
-            logger.error(f"Chyba při získávání seznamu zařízení: {e}")
-            raise
-    
-    async def close(self):
-        """Uzavření API připojení"""
-        if self.session:
-            await self.session.close()
-            self.session = None
-        self.api = None
-        logger.info("API připojení uzavřeno")
 
-# Zpětná kompatibilita s původním API
+    async def get_devices(self) -> list:
+        """
+        Načte seznam všech registrovaných zařízení přes GET /devices.
+
+        Returns:
+            list: Seznam zařízení
+        """
+        api = await self.initialize()
+        try:
+            return await api.async_get_device_list()
+        except Exception as e:
+            logger.error(f"❌ Chyba při načítání seznamu zařízení: {e}")
+            raise
+
+    # ------------------------------------------------------------------
+    # Čistý shutdown
+    # ------------------------------------------------------------------
+
+    async def close(self):
+        """
+        Čistě odpojí MQTT a uzavře HTTP session.
+
+        Volat při vypnutí aplikace pro uvolnění serverových zdrojů
+        (zruší registraci klienta přes DELETE /client).
+        """
+        if self._mqtt and self._mqtt.is_connected:
+            try:
+                await self._mqtt.async_disconnect()
+                logger.info("MQTT odpojeno")
+            except Exception as e:
+                logger.warning(f"Chyba při odpojení MQTT: {e}")
+        self._mqtt = None
+
+        if self._session:
+            await self._session.close()
+            self._session = None
+        self._api = None
+        logger.info("API session uzavřena")
+
+
+# ------------------------------------------------------------------
+# Pomocné funkce
+# ------------------------------------------------------------------
+
 def get_ac_device_id() -> str:
     """
     Načte Device ID klimatizace z data/devices.json.
@@ -138,7 +284,7 @@ def get_ac_device_id() -> str:
     except FileNotFoundError:
         raise FileNotFoundError(
             f"Soubor {devices_path} nenalezen. "
-            "Spusťte 'python setup.py' a vyplňte data/devices.json."
+            "Zkopírujte data/devices.json.example a vyplňte Device ID."
         )
 
     for device in devices:
@@ -146,27 +292,39 @@ def get_ac_device_id() -> str:
             return device["deviceId"]
 
     raise ValueError(
-        "Klimatizace (DEVICE_AIR_CONDITIONER) nebyla nalezena v devices.json. "
-        "Zkontrolujte obsah souboru."
+        "Klimatizace (DEVICE_AIR_CONDITIONER) nebyla nalezena v devices.json."
     )
 
 
+# ------------------------------------------------------------------
+# Zpětná kompatibilita (frontend.py)
+# ------------------------------------------------------------------
+
 async def get_api():
-    """Zpětně kompatibilní funkce pro získání API instance"""
-    api_instance = ThinQAPI()
-    await api_instance.initialize()
-    return api_instance.api, None
+    """
+    Zpětně kompatibilní funkce – vrací (ThinQApi, None).
 
-async def get_device_status(api, device_id):
-    """Zpětně kompatibilní funkce pro získání stavu zařízení"""
-    if hasattr(api, 'async_get_device_status'):
-        return await api.async_get_device_status(device_id)
-    else:
-        return api.get_device_status(device_id)
+    Deprecated: Používejte přímo třídu ThinQAPI.
+    """
+    instance = ThinQAPI()
+    api = await instance.initialize()
+    return api, None
 
-async def send_device_command(api, device_id, payload):
-    """Zpětně kompatibilní funkce pro odeslání příkazu"""
-    if hasattr(api, 'async_post_device_control'):
-        return await api.async_post_device_control(device_id, payload)
-    else:
-        return api.post_device_control(device_id, payload)
+
+async def get_device_status(api: ThinQApi, device_id: str) -> dict:
+    """
+    Zpětně kompatibilní funkce pro získání stavu zařízení.
+
+    Deprecated: Používejte ThinQAPI.get_device_status().
+    """
+    return await api.async_get_device_status(device_id)
+
+
+async def send_device_command(api: ThinQApi, device_id: str, payload: dict) -> dict:
+    """
+    Zpětně kompatibilní funkce pro odeslání příkazu.
+
+    Deprecated: Používejte ThinQAPI.send_device_command().
+    """
+    return await api.async_post_device_control(device_id, payload)
+
