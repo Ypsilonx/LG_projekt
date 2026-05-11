@@ -768,17 +768,18 @@ class ClimateApp(tk.Tk):
             self.led_indicator.set_state("error")
     
     def on_closing(self):
-        """Čištění při zavírání aplikace"""
+        """Čištění při zavírání aplikace – čeká na uzavření MQTT a HTTP session."""
+        self.schedule_check_active = False
         try:
-            # Zastavíme kontrolu plánů
-            self.schedule_check_active = False
-            
             if self.api:
-                asyncio.run_coroutine_threadsafe(self.api.close(), self.loop)
-            self.loop.call_soon_threadsafe(self.loop.stop)
-        except:
-            pass
+                # Zablokujeme hlavní vlákno max. 5s, aby close() stihl proběhnout
+                # před zastavením event loopu (jinak vznikají „Task destroyed" chyby)
+                future = asyncio.run_coroutine_threadsafe(self.api.close(), self.loop)
+                future.result(timeout=5)
+        except Exception as e:
+            logger.warning(f"Chyba při zavírání API: {e}")
         finally:
+            self.loop.call_soon_threadsafe(self.loop.stop)
             self.destroy()
 
 def main():
