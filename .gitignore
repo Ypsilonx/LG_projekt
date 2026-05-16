@@ -9,6 +9,7 @@ env/
 data/config.json
 data/devices.json
 data/schedule.json
+data/automation_rules.json
 # Šablony NEJSOU ignorovány - .example soubory se commitnou
 
 # Nastavení editoru

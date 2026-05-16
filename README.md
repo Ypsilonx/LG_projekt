@@ -10,8 +10,14 @@ Moderní Python aplikace pro kompletní ovládání LG ThinQ klimatizací s pokr
 ## ✨ Hlavní funkce
 
 - 🎨 **Moderní tmavé GUI** - responzivní rozhraní s hover efekty
+- 🧭 **Jasné režimy AUTO/HAND** - viditelný stav řízení s přepínačem v horním panelu
 - 🌡️ **Kompletní ovládání klimatizace** - zapnutí/vypnutí, režimy, teplota, větrání
-- 📅 **Pokročilé plánování** - časové harmonogramy pro automatické ovládání
+- 📅 **Pokročilé plánování (HAND)** - časové harmonogramy dostupné v ručním režimu
+- 🌦️ **Sezónní pravidla automatiky** - chlazení jen ve vybraných obdobích (výchozí: léto)
+- 🌤️ **ČHMÚ weather planning** - hodinový meteogram (POI 510) + fallback region RPZL, horizont 24h, refresh 3h
+- 📊 **Vizualizace počasí v GUI** - graf intervalů, tabulka min/max a stav korekce AC čidla
+- 🌡️ **Teplota čidla s offsetem** - UI zobrazuje pouze výslednou korigovanou hodnotu
+- ⚡ **Energy reporting** - den/týden/měsíc/rok + export CSV
 - ⚡ **Optimalizované API** - smart caching, automatické retry při chybách
 - 🔧 **CLI i GUI režim** - flexibilní použití
 - 💨 **Pokročilé větrání** - směr proudění, síla větru, rotace
@@ -38,6 +44,8 @@ src/
 ├── main.py                    # Univerzální vstupní bod (CLI/GUI)
 ├── server_api.py             # ThinQ API komunikace s caching
 ├── klima_logic.py            # Payload generátor pro všechny příkazy
+├── energy_analytics.py       # Rozsahy energy dotazů + export CSV
+├── weather_provider.py        # ČHMÚ provider + weather-based mode adjustments
 ├── frontend.py               # CLI rozhraní (legacy)
 └── gui/                      # Modularizované GUI komponenty
     ├── app.py                # Hlavní aplikace
@@ -50,7 +58,8 @@ data/
 ├── config.json               # API přihlašovací údaje
 ├── devices.json              # Seznam zařízení
 ├── device_profile.json       # Profil zařízení a podporované funkce
-└── schedule.json             # Časové plány a harmonogramy
+├── schedule.json             # Časové plány a harmonogramy
+└── automation_rules.json     # Sezónní pravidla automatizace
 ```
 
 ### � Krok 1: Získání LG ThinQ API přístupových údajů
@@ -66,16 +75,16 @@ data/
    - Přihlaste se nebo vytvořte nový účet
    - V sekci "My Applications" klikněte na "Create Application"
    - Vyplňte informace o aplikaci
-   - Získáte: `Client ID`, `Client Secret`, `API Key`
+   - Získáte: `Client ID`
 
 3. **Autorizujte své zařízení:**
    - Propojte svůj LG ThinQ účet s vývojářskou aplikací
+   - Vytvořte osobní access token (PAT) pro ThinQ API
    - Získejte seznam vašich zařízení a jejich ID
 
 4. **Poznamenejte si tyto údaje:**
+   - ✅ Access Token (PAT)
    - ✅ Client ID
-   - ✅ Client Secret  
-   - ✅ API Key
    - ✅ Device ID (ID vaší klimatizace)
 
 > 💡 **Tip:** Podrobný návod naleznete v [LG ThinQ Connect API dokumentaci](https://developer.lgaccount.com/thinq-connect)
@@ -127,16 +136,15 @@ Tento script automaticky:
    cp data/config.json.example data/config.json
    cp data/devices.json.example data/devices.json
    cp data/schedule.json.example data/schedule.json
+   cp data/automation_rules.json.example data/automation_rules.json
    ```
 
 2. **Upravte `data/config.json`:**
    ```json
    {
-     "client_id": "váš_client_id_zde",
-     "client_secret": "váš_client_secret_zde",
-     "api_key": "váš_api_key_zde",
-     "country_code": "CZ",
-     "language_code": "cs-CZ"
+       "access_token": "váš_access_token_zde",
+       "country_code": "CZ",
+       "client_id": "váš_client_id_zde"
    }
    ```
 
@@ -144,13 +152,48 @@ Tento script automaticky:
    ```json
    [
      {
-       "device_id": "vaše_device_id_zde",
-       "alias": "Obývací pokoj",
-       "type": "AIR_CONDITIONER",
-       "model_name": "LG AC Model"
+          "deviceId": "vaše_device_id_zde",
+          "deviceInfo": {
+             "deviceType": "DEVICE_AIR_CONDITIONER",
+             "modelName": "LG AC Model",
+             "alias": "Obývací pokoj",
+             "reportable": true
+          }
      }
    ]
    ```
+
+4. **(Volitelné) Upravte `data/automation_rules.json`:**
+    ```json
+    {
+       "season_months": {
+          "WINTER": [11, 12, 1, 2, 3],
+          "TRANSITION": [4, 5, 9, 10],
+          "SUMMER": [6, 7, 8]
+       },
+       "cooling_allowed_seasons": ["SUMMER"],
+       "cooling_block_fallback_mode": "HEAT",
+       "weather": {
+          "enabled": true,
+          "provider": "CHMI_METEOGRAM",
+          "chmi_region_code": "RPZL",
+          "chmi_location_label": "Bynina (Valasske Mezirici)",
+          "chmi_meteogram_poi_id": "510",
+          "chmi_meteogram_x": null,
+          "chmi_meteogram_y": null,
+          "sensor_offset_c": -2.0,
+          "forecast_horizon_hours": 24,
+          "refresh_interval_hours": 3,
+          "use_short_term_forecast": true
+       }
+    }
+    ```
+
+    Výchozí pravidlo: mimo léto je režim `COOL` blokovaný a automatika použije fallback `HEAT`.
+   Pokud je weather planner aktivní, automatika navíc využívá ČHMÚ forecast pro úpravu režimu
+    směrem k úspoře energie (např. `COOL/HEAT -> FAN/AUTO`, pokud forecast i korigovaný senzor
+   nepotvrzují potřebu topení/chlazení). Výchozí provider je `CHMI_METEOGRAM` (POI 510), při
+   chybě se aplikace automaticky přepne na regionální `CHMI` fallback (`chmi_region_code`).
 
 > ⚠️ **BEZPEČNOST:** Nikdy nesdílejte soubory `config.json` a `devices.json`! Obsahují citlivé údaje.
 
@@ -167,8 +210,14 @@ python src/main.py --mode gui
 
 **CLI režim:**
 ```bash
+# Výpis zařízení a aliasů
+python src/main.py --mode cli --list-devices
+
 # Zobrazení stavu zařízení
 python src/main.py --mode cli --status
+
+# Zobrazení stavu podle aliasu zařízení
+python src/main.py --mode cli --status --device-alias "Obývací pokoj"
 
 # Provedení příkazu
 python src/main.py --mode cli --command power_on
@@ -205,15 +254,30 @@ Všechny soubory obsahující tokeny, API klíče a ID zařízení jsou **automa
 ## 🎯 Použití GUI aplikace
 
 ### Základní ovládání
+- **🖐️ HAND / 🤖 AUTO** - přepnutí mezi ručním a automatickým řízením
 - **⚡ Zapnutí/Vypnutí** - hlavní tlačítko power
 - **🌡️ Režimy** - COOL, HEAT, FAN, AUTO, AIR_DRY
 - **🌡️ Teplota** - přesné nastavení s slidérem
-- **💨 Větrání** - síla větru + směr proudění
+- **💨 Větrání (HAND)** - síla větru + směr proudění v rozbalitelné sekci ručního režimu
 - **⚡ Úspora energie** - power save režim
 
 ### Časovače
 - **⏰ Sleep Timer** - rychlé tlačítka 30min, 1h, 2h
-- **📅 Plánování** - pokročilé časové harmonogramy
+- **📅 Plánování (HAND)** - pokročilé časové harmonogramy jen v HAND režimu
+
+### Vizualizace počasí
+- **🌤️ Panel Počasí (ČHMÚ)** - zobrazuje načtený provider, POI/region a čas poslední aktualizace
+- **📉 Graf forecastu** - intervalové min/max teploty pro zvolený horizont (výchozí 24h)
+- **🧮 Korekce AC čidla** - v UI se zobrazuje pouze výsledná teplota po aplikaci offsetu
+
+### Spotřeba energie
+- **⚡ Přehled spotřeby** - samostatné pohledy Den / Týden / Měsíc / Rok
+- **📊 Graf hodnot** - sloupcová vizualizace spotřeby dle zvoleného období
+- **⤓ CSV export** - stažení právě zobrazené datové sady pro další analýzu
+
+Poznámka k realtime příkonu:
+- ThinQ status payload ho nemusí poskytovat konzistentně u všech modelů.
+- Pokud API aktuální příkon nevrátí, GUI to explicitně označí jako nedostupné.
 
 ### Pokročilé plánování
 Vytvářejte komplexní plány jako:
@@ -221,7 +285,16 @@ Vytvářejte komplexní plány jako:
 - "12:00 - přepni na COOL, nastav 22°C"
 - "22:00 - zapni sleep timer na 30 minut"
 
+Režimové řízení:
+- `🖐️ HAND režim` zapne ruční řízení (včetně plánovače a pokročilých prvků větrání).
+- `🤖 AUTO režim` vrátí řízení na pravidla + PID regulaci.
+
 ## 🛠️ Technické detaily
+
+### Provozní playbook
+
+- Podrobné pořadí příkazů, preconditions a limit policy: `docs/command-order-playbook.md`
+- Roadmap scheduleru, počasí a modernizace GUI: `docs/scheduler-weather-roadmap.md`
 
 ### Podporované příkazy
 - **Power:** `POWER_ON`, `POWER_OFF`

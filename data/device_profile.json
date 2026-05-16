@@ -23,18 +23,18 @@
         ],
         "value": {
           "r": [
-            "COOL",
+            "AUTO",
             "AIR_DRY",
+            "COOL",
             "HEAT",
-            "FAN",
-            "AUTO"
+            "FAN"
           ],
           "w": [
-            "COOL",
+            "AUTO",
             "AIR_DRY",
+            "COOL",
             "HEAT",
-            "FAN",
-            "AUTO"
+            "FAN"
           ]
         }
       }
@@ -48,12 +48,12 @@
         ],
         "value": {
           "r": [
-            "POWER_ON",
-            "POWER_OFF"
+            "POWER_OFF",
+            "POWER_ON"
           ],
           "w": [
-            "POWER_ON",
-            "POWER_OFF"
+            "POWER_OFF",
+            "POWER_ON"
           ]
         }
       }
@@ -309,15 +309,15 @@
         ],
         "value": {
           "r": [
-            "HIGH",
-            "MID",
             "LOW",
+            "MID",
+            "HIGH",
             "AUTO"
           ],
           "w": [
-            "HIGH",
-            "MID",
             "LOW",
+            "MID",
+            "HIGH",
             "AUTO"
           ]
         }
@@ -325,11 +325,21 @@
       "windStrengthDetail": {
         "type": "enum",
         "mode": [
-          "r"
+          "r",
+          "w"
         ],
         "value": {
           "r": [
-            "NATURE"
+            "NATURE",
+            "LOW",
+            "MID",
+            "HIGH"
+          ],
+          "w": [
+            "NATURE",
+            "LOW",
+            "MID",
+            "HIGH"
           ]
         }
       }

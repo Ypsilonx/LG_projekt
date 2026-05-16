@@ -1,0 +1,27 @@
+{
+  "season_months": {
+    "WINTER": [11, 12, 1, 2, 3],
+    "TRANSITION": [4, 5, 9, 10],
+    "SUMMER": [6, 7, 8]
+  },
+  "cooling_allowed_seasons": ["SUMMER"],
+  "cooling_block_fallback_mode": "HEAT",
+  "manual_override_requires_resume_button": true,
+  "strategy": "comfort_with_energy_saving",
+  "weather": {
+    "enabled": true,
+    "sensor_offset_c": -2.0,
+    "use_short_term_forecast": true,
+    "provider": "CHMI_METEOGRAM",
+    "chmi_region_code": "RPZL",
+    "chmi_location_label": "Valašské Meziříčí",
+    "chmi_meteogram_poi_id": "510",
+    "chmi_meteogram_x": null,
+    "chmi_meteogram_y": null,
+    "forecast_horizon_hours": 24,
+    "refresh_interval_hours": 3,
+    "comfort_margin_c": 1.0,
+    "prefer_aladin_model": true,
+    "adjust_mode_by_forecast": true
+  }
+}

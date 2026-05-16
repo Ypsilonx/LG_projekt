@@ -3,7 +3,7 @@
 # Generováno: pip freeze (klíčové balíčky)
 
 # LG ThinQ API + MQTT klient (zahrnuje awscrt a awsiotsdk)
-thinqconnect==1.0.7
+thinqconnect==1.0.12
 
 # Asynchronní HTTP klient (vyžadován thinqconnect i server_api.py)
 aiohttp==3.12.15

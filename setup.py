@@ -13,7 +13,8 @@ def setup_project():
     configs = [
         ("config.json.example", "config.json"),
         ("devices.json.example", "devices.json"),
-        ("schedule.json.example", "schedule.json")
+        ("schedule.json.example", "schedule.json"),
+        ("automation_rules.json.example", "automation_rules.json"),
     ]
     
     print("🚀 Inicializace LG ThinQ projektu...\n")

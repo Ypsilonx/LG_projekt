@@ -7,10 +7,11 @@ MQTT stream pro okamžité notifikace o změnách stavu bez pollingu.
 import json
 import logging
 import asyncio
+import random
 import aiohttp
 from pathlib import Path
-from typing import Callable, Optional
-from thinqconnect import ThinQApi, ThinQMQTTClient
+from typing import Any, Awaitable, Callable, Optional
+from thinqconnect import ThinQApi, ThinQAPIException, ThinQMQTTClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,9 @@ class ThinQAPI:
         self._session: Optional[aiohttp.ClientSession] = None
         self._mqtt: Optional[ThinQMQTTClient] = None
         self.config = self._load_config()
+
+    RETRYABLE_THINQ_ERROR_CODES = {"1306", "2210"}
+    RETRYABLE_HTTP_STATUS_CODES = {429, 500, 502, 503, 504}
 
     # ------------------------------------------------------------------
     # Konfigurace
@@ -85,6 +89,92 @@ class ThinQAPI:
                 client_id=self.config["client_id"],
             )
         return self._api
+
+    def _extract_error_code(self, exc: Exception) -> str | None:
+        """
+        Vrátí ThinQ chybový kód z výjimky, pokud je k dispozici.
+
+        Args:
+            exc: Zachycená výjimka
+
+        Returns:
+            str | None: ThinQ kód chyby, jinak None
+        """
+        code = getattr(exc, "code", None)
+        return str(code) if code is not None else None
+
+    def _is_retryable_exception(self, exc: Exception) -> bool:
+        """
+        Rozhodne, zda je výjimka kandidát na opakování požadavku.
+
+        Args:
+            exc: Zachycená výjimka
+
+        Returns:
+            bool: True pokud má smysl požadavek opakovat
+        """
+        if isinstance(exc, ThinQAPIException):
+            code = self._extract_error_code(exc)
+            return code in self.RETRYABLE_THINQ_ERROR_CODES
+
+        if isinstance(exc, aiohttp.ClientResponseError):
+            return exc.status in self.RETRYABLE_HTTP_STATUS_CODES
+
+        if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError)):
+            return True
+
+        return False
+
+    async def _run_with_retry(
+        self,
+        operation_name: str,
+        coroutine_factory: Callable[[], Awaitable[Any]],
+        *,
+        max_attempts: int = 4,
+        base_delay: float = 0.5,
+        max_delay: float = 8.0,
+    ) -> Any:
+        """
+        Spustí asynchronní operaci s exponenciálním backoffem a jitterem.
+
+        Retry probíhá pouze pro chyby, které indikují přetížení API nebo
+        dočasný síťový problém.
+
+        Args:
+            operation_name: Název operace pro logování
+            coroutine_factory: Funkce vracející awaitable operaci
+            max_attempts: Maximální počet pokusů
+            base_delay: Základní čekání mezi pokusy v sekundách
+            max_delay: Horní limit čekání mezi pokusy v sekundách
+
+        Returns:
+            Any: Výsledek operace
+
+        Raises:
+            Exception: Poslední chyba pokud se operace ani po retry nepodaří
+        """
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await coroutine_factory()
+            except Exception as exc:
+                retryable = self._is_retryable_exception(exc)
+                error_code = self._extract_error_code(exc) or "n/a"
+
+                if not retryable or attempt >= max_attempts:
+                    logger.error(
+                        f"❌ {operation_name} selhalo (pokus {attempt}/{max_attempts}, code={error_code}): {exc}"
+                    )
+                    raise
+
+                delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+                jitter = random.uniform(0.0, delay * 0.35)
+                sleep_seconds = delay + jitter
+
+                logger.warning(
+                    f"⚠️ {operation_name} selhalo (pokus {attempt}/{max_attempts}, code={error_code}); "
+                    f"opakování za {sleep_seconds:.2f}s"
+                )
+                await asyncio.sleep(sleep_seconds)
 
     # ------------------------------------------------------------------
     # MQTT real-time stream
@@ -194,13 +284,18 @@ class ThinQAPI:
             Exception: Při chybě komunikace s API
         """
         api = await self.initialize()
-        try:
+
+        async def _request_status() -> dict:
             status = await api.async_get_device_status(device_id)
             logger.debug(f"📋 Stav načten pro {device_id[:8]}...")
             return status
-        except Exception as e:
-            logger.error(f"❌ Chyba při načítání stavu: {e}")
-            raise
+
+        return await self._run_with_retry(
+            "Načítání stavu zařízení",
+            _request_status,
+            max_attempts=4,
+            base_delay=0.4,
+        )
 
     async def send_device_command(self, device_id: str, payload: dict) -> dict:
         """
@@ -217,14 +312,19 @@ class ThinQAPI:
             Exception: Při chybě komunikace nebo odmítnutí příkazu
         """
         api = await self.initialize()
-        try:
-            logger.info(f"📤 Příkaz → {device_id[:8]}...: {json.dumps(payload, ensure_ascii=False)}")
+        logger.info(f"📤 Příkaz → {device_id[:8]}...: {json.dumps(payload, ensure_ascii=False)}")
+
+        async def _request_command() -> dict:
             result = await api.async_post_device_control(device_id, payload)
             logger.info(f"📥 Odpověď: {result}")
             return result
-        except Exception as e:
-            logger.error(f"❌ Chyba při odesílání příkazu: {e}")
-            raise
+
+        return await self._run_with_retry(
+            "Odeslání příkazu zařízení",
+            _request_command,
+            max_attempts=3,
+            base_delay=0.6,
+        )
 
     async def get_devices(self) -> list:
         """
@@ -234,11 +334,16 @@ class ThinQAPI:
             list: Seznam zařízení
         """
         api = await self.initialize()
-        try:
+
+        async def _request_devices() -> list:
             return await api.async_get_device_list()
-        except Exception as e:
-            logger.error(f"❌ Chyba při načítání seznamu zařízení: {e}")
-            raise
+
+        return await self._run_with_retry(
+            "Načítání seznamu zařízení",
+            _request_devices,
+            max_attempts=4,
+            base_delay=0.4,
+        )
 
     async def get_device_profile(self, device_id: str) -> dict:
         """
@@ -257,13 +362,18 @@ class ThinQAPI:
             Exception: Při chybě komunikace s API
         """
         api = await self.initialize()
-        try:
+
+        async def _request_profile() -> dict:
             profile = await api.async_get_device_profile(device_id)
             logger.info(f"📋 Profil zařízení stažen z API ({device_id[:8]}...)")
             return profile
-        except Exception as e:
-            logger.error(f"❌ Chyba při načítání profilu zařízení: {e}")
-            raise
+
+        return await self._run_with_retry(
+            "Načítání profilu zařízení",
+            _request_profile,
+            max_attempts=4,
+            base_delay=0.4,
+        )
 
     async def get_energy_usage(
         self,
@@ -308,16 +418,23 @@ class ThinQAPI:
         headers = api._generate_headers()
         params = {"period": period, "startDate": start_date, "endDate": end_date}
 
-        try:
+        async def _request_energy() -> list[dict]:
+            if not self._session:
+                raise RuntimeError("HTTP session není inicializována")
+
             async with self._session.get(url, headers=headers, params=params) as resp:
                 resp.raise_for_status()
                 body = await resp.json()
             data_list = body.get("response", {}).get("result", {}).get("dataList", [])
             logger.info(f"⚡ Energy usage načteno: {len(data_list)} záznamů ({period})")
             return data_list
-        except Exception as e:
-            logger.error(f"❌ Chyba při načítání energy usage: {e}")
-            raise
+
+        return await self._run_with_retry(
+            "Načítání energy usage",
+            _request_energy,
+            max_attempts=4,
+            base_delay=0.7,
+        )
 
     # ------------------------------------------------------------------
     # Čistý shutdown
@@ -349,6 +466,131 @@ class ThinQAPI:
 # Pomocné funkce
 # ------------------------------------------------------------------
 
+def _load_devices_file() -> list[dict[str, Any]]:
+    """
+    Načte obsah data/devices.json a vrátí seznam zařízení.
+
+    Returns:
+        list[dict[str, Any]]: Surový seznam zařízení ze souboru
+
+    Raises:
+        FileNotFoundError: Pokud soubor devices.json neexistuje
+        ValueError: Pokud soubor neobsahuje JSON pole
+    """
+    devices_path = Path(__file__).parent.parent / "data" / "devices.json"
+    try:
+        with open(devices_path, "r", encoding="utf-8") as f:
+            devices = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Soubor {devices_path} nenalezen. "
+            "Zkopírujte data/devices.json.example a vyplňte Device ID."
+        )
+
+    if not isinstance(devices, list):
+        raise ValueError("Soubor devices.json musí obsahovat pole zařízení.")
+
+    return devices
+
+
+def _normalize_device_entry(device: dict[str, Any]) -> dict[str, str | None]:
+    """
+    Normalizuje záznam zařízení na jednotný tvar napříč starým i novým formátem.
+
+    Args:
+        device: Záznam zařízení z devices.json
+
+    Returns:
+        dict[str, str | None]: Slovník s klíči device_id, alias, device_type, model_name
+    """
+    info = device.get("deviceInfo", {}) if isinstance(device.get("deviceInfo"), dict) else {}
+    device_id = device.get("deviceId") or device.get("device_id")
+    device_type = info.get("deviceType") or device.get("type")
+    model_name = info.get("modelName") or device.get("model_name")
+    alias = info.get("alias") or device.get("alias") or device_id
+
+    return {
+        "device_id": str(device_id) if device_id else None,
+        "alias": str(alias) if alias else None,
+        "device_type": str(device_type) if device_type else None,
+        "model_name": str(model_name) if model_name else None,
+    }
+
+
+def _is_air_conditioner(device_type: str | None) -> bool:
+    """
+    Ověří, zda typ zařízení odpovídá klimatizaci.
+
+    Args:
+        device_type: Typ zařízení z devices.json
+
+    Returns:
+        bool: True pokud jde o klimatizaci, jinak False
+    """
+    if not device_type:
+        return False
+
+    normalized = device_type.upper()
+    return normalized in {"DEVICE_AIR_CONDITIONER", "AIR_CONDITIONER"}
+
+
+def list_devices() -> list[dict[str, str | None]]:
+    """
+    Vrátí seznam zařízení v normalizovaném formátu.
+
+    Returns:
+        list[dict[str, str | None]]: Seznam zařízení s jednotnými klíči
+    """
+    normalized_devices: list[dict[str, str | None]] = []
+    for raw_device in _load_devices_file():
+        normalized = _normalize_device_entry(raw_device)
+        if normalized["device_id"]:
+            normalized_devices.append(normalized)
+    return normalized_devices
+
+
+def get_device_id_by_alias(alias: str, prefer_ac: bool = True) -> str:
+    """
+    Najde Device ID podle aliasu zařízení (case-insensitive).
+
+    Args:
+        alias: Alias zařízení (např. "Obývák")
+        prefer_ac: Pokud existuje více shod, preferuje klimatizaci
+
+    Returns:
+        str: Device ID odpovídající zadanému aliasu
+
+    Raises:
+        ValueError: Pokud alias neexistuje nebo není jednoznačný
+    """
+    alias_norm = alias.strip().lower()
+    if not alias_norm:
+        raise ValueError("Alias zařízení nesmí být prázdný.")
+
+    matches = [
+        d for d in list_devices()
+        if d.get("alias") and d["alias"].strip().lower() == alias_norm
+    ]
+
+    if not matches:
+        raise ValueError(f"Zařízení s aliasem '{alias}' nebylo nalezeno.")
+
+    if prefer_ac:
+        ac_match = next((d for d in matches if _is_air_conditioner(d.get("device_type"))), None)
+        if ac_match and ac_match.get("device_id"):
+            return ac_match["device_id"]
+
+    if len(matches) > 1:
+        raise ValueError(
+            f"Alias '{alias}' odpovídá více zařízením. "
+            "Použijte --device-id pro jednoznačný výběr."
+        )
+
+    device_id = matches[0].get("device_id")
+    if not device_id:
+        raise ValueError(f"Zařízení s aliasem '{alias}' nemá platné device_id.")
+    return device_id
+
 def get_ac_device_id() -> str:
     """
     Načte Device ID klimatizace z data/devices.json.
@@ -361,22 +603,12 @@ def get_ac_device_id() -> str:
         ValueError: Pokud klimatizace v souboru nebyla nalezena
         FileNotFoundError: Pokud soubor devices.json neexistuje
     """
-    devices_path = Path(__file__).parent.parent / "data" / "devices.json"
-    try:
-        with open(devices_path, "r", encoding="utf-8") as f:
-            devices = json.load(f)
-    except FileNotFoundError:
-        raise FileNotFoundError(
-            f"Soubor {devices_path} nenalezen. "
-            "Zkopírujte data/devices.json.example a vyplňte Device ID."
-        )
-
-    for device in devices:
-        if device.get("deviceInfo", {}).get("deviceType") == "DEVICE_AIR_CONDITIONER":
-            return device["deviceId"]
+    for device in list_devices():
+        if _is_air_conditioner(device.get("device_type")) and device.get("device_id"):
+            return device["device_id"]
 
     raise ValueError(
-        "Klimatizace (DEVICE_AIR_CONDITIONER) nebyla nalezena v devices.json."
+        "Klimatizace (DEVICE_AIR_CONDITIONER/AIR_CONDITIONER) nebyla nalezena v devices.json."
     )
 
 

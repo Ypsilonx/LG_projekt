@@ -5,9 +5,7 @@ Obsahuje widgety pro zapnutí/vypnutí, změnu módu, teploty, větru apod.
 """
 import tkinter as tk
 from tkinter import ttk
-import asyncio
-import threading
-from typing import Callable, Optional, List
+from typing import Callable
 
 class ClimateControls(ttk.Frame):
     """Widget s osnovními ovládacími prvky klimatizace"""
@@ -26,6 +24,9 @@ class ClimateControls(ttk.Frame):
         self.rotate_updown_var = tk.BooleanVar()
         self.rotate_leftright_var = tk.BooleanVar()
         self.powersave_var = tk.BooleanVar()
+        self.hand_mode_enabled = False
+        self.advanced_controls_expanded = False
+        self._last_mode_layout = None
         
         # Data z profilu
         self.modes = self.profile["property"]["airConJobMode"]["currentJobMode"]["value"]["w"]
@@ -60,7 +61,7 @@ class ClimateControls(ttk.Frame):
         self.current_temp_label = ttk.Label(self.temp_frame, text="Aktuální: --°C", font=("Segoe UI", 10, "bold"))
         self.current_temp_label.pack(pady=5)
         
-        # Cílová teplota (skrytá v módu FAN)
+        # Cílová teplota (layout je stale stejny, v rezimu FAN se jen vypne)
         self.target_temp_frame = ttk.Frame(self.temp_frame)
         self.target_temp_frame.pack(fill='x', pady=5)
         
@@ -75,15 +76,33 @@ class ClimateControls(ttk.Frame):
         self.temp_btn = ttk.Button(self.target_temp_frame, text="Nastavit teplotu", command=self.set_temperature)
         self.temp_btn.pack(pady=5)
 
-        # Síla větru s detailem
-        wind_frame = ttk.LabelFrame(self, text="💨 Síla větru", padding=10)
-        wind_frame.pack(pady=10, padx=20, fill='x')
+        self.temp_mode_hint = ttk.Label(
+            self.target_temp_frame,
+            text="",
+            font=("Segoe UI", 9),
+            foreground="#999999",
+        )
+        self.temp_mode_hint.pack(anchor='w', pady=(2, 0))
+
+        self.advanced_toggle_btn = ttk.Button(
+            self,
+            text="▶ Pokrocile rucni ovladani",
+            command=self._toggle_advanced_controls,
+        )
+        self.advanced_toggle_btn.pack(pady=(0, 6), padx=20, fill='x')
+
+        self.advanced_controls_container = ttk.Frame(self)
+        self.advanced_controls_container.pack(fill='x')
+
+        # Síla větru s detailem (pouze HAND mód)
+        self.wind_frame = ttk.LabelFrame(self.advanced_controls_container, text="💨 Síla větru", padding=10)
+        self.wind_frame.pack(pady=10, padx=20, fill='x')
         
         # Detail síly větru (read-only info)
-        self.wind_detail_label = ttk.Label(wind_frame, text="Detail: --", font=("Segoe UI", 9))
+        self.wind_detail_label = ttk.Label(self.wind_frame, text="Detail: --", font=("Segoe UI", 9))
         self.wind_detail_label.pack(pady=2)
         
-        wind_control_frame = ttk.Frame(wind_frame)
+        wind_control_frame = ttk.Frame(self.wind_frame)
         wind_control_frame.pack(fill='x')
         
         self.wind_combo = ttk.Combobox(wind_control_frame, values=self.wind_strengths, textvariable=self.wind_var, 
@@ -93,7 +112,7 @@ class ClimateControls(ttk.Frame):
         self.wind_btn.pack(side=tk.LEFT, padx=5)
 
         # Směr větru s rozšířenými možnostmi
-        self.wind_direction_frame = ttk.LabelFrame(self, text="🌀 Směr větru", padding=10)
+        self.wind_direction_frame = ttk.LabelFrame(self.advanced_controls_container, text="🌀 Směr větru", padding=10)
         self.wind_direction_frame.pack(pady=10, padx=20, fill='x')
         
         # Automatické otáčení
@@ -114,24 +133,83 @@ class ClimateControls(ttk.Frame):
         self.leftright_check.pack(side=tk.LEFT, padx=10)
 
         # Power Save režim
-        self.powersave_frame = ttk.LabelFrame(self, text="⚡ Úspora energie", padding=10)
+        self.powersave_frame = ttk.LabelFrame(self.advanced_controls_container, text="⚡ Úspora energie", padding=10)
         self.powersave_frame.pack(pady=10, padx=20, fill='x')
         
         self.powersave_check = ttk.Checkbutton(self.powersave_frame, text="Zapnout úsporu energie", 
                                               variable=self.powersave_var, command=self.set_power_save)
         self.powersave_check.pack()
+
+        if self.modes:
+            self.mode_var.set(self.modes[0])
+        self.on_mode_change()
+        self.set_hand_mode(False)
+
+    def set_hand_mode(self, enabled: bool):
+        """Nastavi viditelnost HAND-only pokrocileho ovladani.
+
+        Args:
+            enabled: True pokud ma byt aktivni HAND mod.
+        """
+        self.hand_mode_enabled = bool(enabled)
+        if not self.hand_mode_enabled:
+            self.advanced_controls_expanded = False
+
+        self._apply_advanced_controls_visibility()
+
+    def _toggle_advanced_controls(self):
+        """Prepinac rozbaleni pokrocilych rucnich prvku."""
+        if not self.hand_mode_enabled:
+            return
+
+        self.advanced_controls_expanded = not self.advanced_controls_expanded
+        self._apply_advanced_controls_visibility()
+
+    def _apply_advanced_controls_visibility(self):
+        """Aplikuje aktualni viditelnost HAND-only panelu."""
+        if self.hand_mode_enabled:
+            if not self.advanced_toggle_btn.winfo_manager():
+                self.advanced_toggle_btn.pack(pady=(0, 6), padx=20, fill='x')
+
+            if self.advanced_controls_expanded:
+                if not self.advanced_controls_container.winfo_manager():
+                    self.advanced_controls_container.pack(fill='x')
+            elif self.advanced_controls_container.winfo_manager():
+                self.advanced_controls_container.pack_forget()
+        else:
+            if self.advanced_controls_container.winfo_manager():
+                self.advanced_controls_container.pack_forget()
+            if self.advanced_toggle_btn.winfo_manager():
+                self.advanced_toggle_btn.pack_forget()
+
+        self._update_advanced_toggle_text()
+
+    def _update_advanced_toggle_text(self):
+        """Aktualizuje text tlacitka dle stavu rozbaleni."""
+        if not self.hand_mode_enabled:
+            return
+
+        icon = "▼" if self.advanced_controls_expanded else "▶"
+        self.advanced_toggle_btn.configure(text=f"{icon} Pokrocile rucni ovladani")
         
     def on_mode_change(self, event=None):
-        """Reakce na změnu módu - skrytí/zobrazení příslušných widgetů"""
+        """Reakce na změnu modu bez skakani layoutu pri prepnuti."""
         current_mode = self.mode_var.get()
-        
+
+        if current_mode == self._last_mode_layout:
+            return
+
+        supports_target_temp = current_mode != "FAN"
+
         if current_mode == "FAN":
-            # V módu FAN skryjeme nastavení cílové teploty
-            self.target_temp_frame.pack_forget()
+            self.temp_scale.configure(state='disabled')
+            self.temp_btn.configure(state='disabled')
+            self.temp_mode_hint.configure(text="V rezimu FAN se cilova teplota nenastavuje")
             self.temp_frame.configure(text="🌡️ Aktuální teplota")
         else:
-            # V ostatních módech zobrazíme nastavení cílové teploty
-            self.target_temp_frame.pack(fill='x', pady=5, after=self.current_temp_label)
+            self.temp_scale.configure(state='normal')
+            self.temp_btn.configure(state='normal')
+            self.temp_mode_hint.configure(text="")
             self.temp_frame.configure(text="🌡️ Teplota")
             
             # Upravíme rozsah teplot podle módu (pouze celá čísla)
@@ -151,8 +229,13 @@ class ClimateControls(ttk.Frame):
                 # Odvlhčování: 18-30°C
                 self.temp_scale.configure(from_=18, to=30)
                 self.temp_frame.configure(text="🌡️ Odvlhčování (18-30°C)")
+
+        if supports_target_temp and self.temp_mode_hint.cget("text"):
+            self.temp_mode_hint.configure(text="")
+
+        self._last_mode_layout = current_mode
         
-        # Aktualizace velikosti okna
+        # Aktualizace velikosti okna po zmene obsahu
         self.update_idletasks()
         
     def update_temp_label(self, value):
@@ -163,8 +246,13 @@ class ClimateControls(ttk.Frame):
         self.temp_var.set(temp)
         self.temp_label.config(text=f"Cíl: {temp}°C")
         
-    def update_status(self, device_status: dict):
-        """Aktualizace GUI podle stavu zařízení"""
+    def update_status(self, device_status: dict, sensor_offset_c: float = 0.0):
+        """Aktualizace GUI podle stavu zařízení.
+
+        Args:
+            device_status: Snapshot stavu klimatizace.
+            sensor_offset_c: Korekce cidla v C, aplikovana na aktualni teplotu.
+        """
         # Extrakce dat ze statusu
         current_temp = device_status.get("temperature", {}).get("currentTemperature", "?")
         target_temp = device_status.get("temperature", {}).get("targetTemperature", "?")
@@ -175,13 +263,18 @@ class ClimateControls(ttk.Frame):
         wind_leftright = device_status.get("windDirection", {}).get("rotateLeftRight", False)
         power_save = device_status.get("powerSave", {}).get("powerSaveEnabled", False)
         
-        # Aktualizace aktuální teploty
-        self.current_temp_label.config(text=f"Aktuální: {current_temp}°C")
+        # Aktualizace aktuální teploty (zobrazeni s offsetem)
+        try:
+            corrected_current_temp = float(current_temp) + float(sensor_offset_c)
+            self.current_temp_label.config(text=f"Aktualni (s offsetem): {corrected_current_temp:.1f}°C")
+        except (TypeError, ValueError):
+            self.current_temp_label.config(text="Aktualni (s offsetem): --°C")
         
         # Aktualizace hodnot v GUI (bez triggeru událostí)
         if mode in self.modes:
-            self.mode_var.set(mode)
-            self.on_mode_change()  # Aplikuje logiku skrytí/zobrazení
+            if self.mode_var.get() != mode:
+                self.mode_var.set(mode)
+                self.on_mode_change()
             
         if isinstance(target_temp, (int, float)) and mode != "FAN":
             self.temp_var.set(target_temp)
@@ -294,6 +387,7 @@ class InfoPanel(ttk.Frame):
     
     def __init__(self, parent):
         super().__init__(parent)
+        self.hand_mode_enabled = False
         self.create_widgets()
         
     def create_widgets(self):
@@ -317,6 +411,21 @@ class InfoPanel(ttk.Frame):
         # Jednotka teploty
         self.temp_unit_label = ttk.Label(info_frame, text="Jednotka: °C", font=("Segoe UI", 9))
         self.temp_unit_label.pack(anchor='w', pady=1)
+
+        self.set_hand_mode(False)
+
+    def set_hand_mode(self, enabled: bool):
+        """Nastavi viditelnost HAND-only informaci o proudění.
+
+        Args:
+            enabled: True pokud je aktivni HAND rezim.
+        """
+        self.hand_mode_enabled = bool(enabled)
+        if self.hand_mode_enabled:
+            if not self.wind_detail_info.winfo_manager():
+                self.wind_detail_info.pack(anchor='w', pady=1, before=self.temp_unit_label)
+        elif self.wind_detail_info.winfo_manager():
+            self.wind_detail_info.pack_forget()
         
     def update_status(self, device_status: dict):
         """Aktualizace informačního panelu"""

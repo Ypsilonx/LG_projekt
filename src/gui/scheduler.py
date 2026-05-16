@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, time
 import json
-import os
+from pathlib import Path
 from typing import List, Dict, Any
 
 class ScheduleEntry:
@@ -132,7 +132,7 @@ class SchedulerWidget(ttk.Frame):
         self.modes = modes
         self.wind_options = wind_options
         self.on_schedule_change = on_schedule_change
-        self.schedule_file = "data/schedule.json"
+        self.schedule_file = Path(__file__).resolve().parents[2] / "data" / "schedule.json"
         self.schedule_entries: List[ScheduleEntry] = []
         
         self.create_widgets()
@@ -278,7 +278,7 @@ class SchedulerWidget(ttk.Frame):
     def save_schedule(self):
         """Uložení plánu do souboru"""
         try:
-            os.makedirs("data", exist_ok=True)
+            self.schedule_file.parent.mkdir(parents=True, exist_ok=True)
             schedule_data = [entry.to_dict() for entry in self.schedule_entries]
             data = {
                 "schedules": schedule_data,
@@ -296,7 +296,7 @@ class SchedulerWidget(ttk.Frame):
     def load_schedule(self):
         """Načtení plánu ze souboru"""
         try:
-            if os.path.exists(self.schedule_file):
+            if self.schedule_file.exists():
                 with open(self.schedule_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     # Kontrola struktury souboru
