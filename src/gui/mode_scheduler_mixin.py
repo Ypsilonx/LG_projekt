@@ -328,9 +328,7 @@ class ModeSchedulerMixin:
     def _calculate_remaining_time(self, schedule_entry, current_time):
         """Výpočet zbývajícího času aktivního plánu."""
         try:
-            from datetime import datetime as _datetime
-
-            end_time = _datetime.strptime(schedule_entry.end_time, "%H:%M").time()
+            end_time = datetime.strptime(schedule_entry.end_time, "%H:%M").time()
             current_time_only = current_time.time()
 
             # Převod na minuty
@@ -357,8 +355,6 @@ class ModeSchedulerMixin:
             if not hasattr(self, 'scheduler_widget') or not self.scheduler_widget:
                 return None, None
 
-            from datetime import datetime as _datetime
-
             current_time_only = current_time.time()
             current_minutes = current_time_only.hour * 60 + current_time_only.minute
 
@@ -370,7 +366,7 @@ class ModeSchedulerMixin:
                     continue
 
                 try:
-                    start_time = _datetime.strptime(entry.start_time, "%H:%M").time()
+                    start_time = datetime.strptime(entry.start_time, "%H:%M").time()
                     start_minutes = start_time.hour * 60 + start_time.minute
 
                     # Pokud je start_time dnes později

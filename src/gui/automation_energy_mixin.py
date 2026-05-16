@@ -11,7 +11,12 @@ from tkinter import filedialog
 
 import aiohttp
 
-from automation_rules import build_automation_summary, load_automation_rules, resolve_scheduled_mode
+from automation_rules import (
+    build_automation_summary,
+    get_season_for_datetime,
+    load_automation_rules,
+    resolve_scheduled_mode,
+)
 from energy_analytics import export_energy_records_csv, normalize_energy_records, resolve_energy_query
 from gui.scheduler import ScheduleEntry
 from thermal_controller import decide_thermal_control, derive_policy_for_target
@@ -369,6 +374,32 @@ class AutomationEnergyMixin:
             and (current_time - self.last_thermal_action_at) < cooldown_delta
         ):
             return
+
+        # Sezónní filtr: COOL je blokován mimo léto, HEAT je blokován v létě.
+        # PID nesmí obcházet sezónní pravidla automatizace.
+        if decision.action == "run" and decision.mode:
+            mode_upper = str(decision.mode).upper()
+            if mode_upper == "COOL":
+                season_resolution = resolve_scheduled_mode(
+                    requested_mode=mode_upper,
+                    current_time=current_time,
+                    rules=self.automation_rules,
+                )
+                # U PID nechceme fallback na HEAT — pokud je COOL blokovano nebo
+                # by byl prejit na jiny rezim (adjusted), prostě preskakujeme.
+                if not season_resolution.allowed or season_resolution.adjusted:
+                    logger.info(
+                        f"PID: rezim COOL blokovany/upraven sezónnimi pravidly ({season_resolution.reason}), preskakuji."
+                    )
+                    return
+            elif mode_upper == "HEAT":
+                # HEAT nespouštíme v sezóně, kde je povoleno chlazení (léto).
+                current_season = get_season_for_datetime(current_time, self.automation_rules)
+                if current_season in self.automation_rules.cooling_allowed_seasons:
+                    logger.info(
+                        f"PID: rezim HEAT blokovany v sezone {current_season} (chlazeci sezona), preskakuji."
+                    )
+                    return
 
         if decision.action == "power_off":
             self.handle_device_command("power_off")

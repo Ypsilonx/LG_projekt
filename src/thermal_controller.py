@@ -198,7 +198,7 @@ def decide_thermal_control(
                         target_temperature_c=None,
                         wind_strength=None,
                         reason=(
-                            "PID: watchdog - po 30 min indoor nekleslo pod "
+                            f"PID: watchdog - po {policy.cooling_watchdog_minutes} min indoor nekleslo pod "
                             f"{policy.cooling_watchdog_threshold_c:.1f}C, vypinam klimatizaci."
                         ),
                     ),
@@ -294,6 +294,22 @@ def decide_thermal_control(
         )
 
     if delta_to_target > 0.0:
+        # Udrzovaci chlazeni: pokud je zarizeni OFF, nezapiname ho pod prahem cooling_start_above_c.
+        # K zapnuti od nuly slouzi vyhradne vetev need_cooling vyse.
+        if not power_on:
+            return (
+                ThermalControlDecision(
+                    action="keep",
+                    mode=None,
+                    target_temperature_c=None,
+                    wind_strength=None,
+                    reason=(
+                        f"PID: indoor {indoor_corrected_c:.1f}C nad cilem, ale pod prahem startu "
+                        f"{policy.cooling_start_above_c:.1f}C a zarizeni je OFF - cekam."
+                    ),
+                ),
+                next_state,
+            )
         error_c = abs(delta_to_target)
         wind = _wind_by_error(error_c, policy.cooling_high_error_c, policy.cooling_mid_error_c)
         return (
@@ -310,6 +326,21 @@ def decide_thermal_control(
             next_state,
         )
 
+    # Udrzovaci topeni: pokud je zarizeni OFF, nezapiname ho pod prahem heating_start_below_c.
+    if not power_on:
+        return (
+            ThermalControlDecision(
+                action="keep",
+                mode=None,
+                target_temperature_c=None,
+                wind_strength=None,
+                reason=(
+                    f"PID: indoor {indoor_corrected_c:.1f}C pod cilem, ale nad prahem startu "
+                    f"{policy.heating_start_below_c:.1f}C a zarizeni je OFF - cekam."
+                ),
+            ),
+            next_state,
+        )
     error_c = abs(delta_to_target)
     wind = _wind_by_error(error_c, policy.heating_high_error_c, policy.heating_mid_error_c)
     return (
