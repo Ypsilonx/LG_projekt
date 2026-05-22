@@ -103,16 +103,13 @@ Pri navratu k projektu po delsi dobe:
 3. Overit, ze config.json obsahuje platny PAT a client_id.
 4. Overit, ze devices.json ma spravne deviceId.
 5. Spustit CLI --status pro rychly smoke test.
-6. Nebo spustit web (--mode web) a overit /health endpoint a MQTT stav v logu.
-7. Spustit GUI a overit MQTT connect.
-8. Otestovat jeden bezpecny prikaz (power_on nebo power_off).
+6. Spustit web (--mode web), overit /health endpoint a MQTT stav v logu.
+7. Otestovat jeden bezpecny prikaz (power_on nebo power_off).
 9. Zkontrolovat logy na chybove kody 1306, 2210, 2304.
 
-## 8. Rozsireni do budoucna
-
-Doporucene dalsi kroky:
+## 8. Dalsi kroky (neimplementovano)
 
 1. MQTT watchdog s automatickym fallback pollingem pri delsim vypadku.
 2. Persistovana telemetrie API (latence, pocty volani, error kody).
-3. Rezim "safe batch" pro scheduler (hard serial execution + potvrzeni stavu mezi kroky).
+3. Scheduler executor – background runner pro HAND plany (aktualne je schedule.json jen uloziste).
 4. Integracni testy proti mock API modelu.

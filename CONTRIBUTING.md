@@ -157,7 +157,7 @@ Před odesláním PR:
 - [ ] UTF-8 encoding v nových souborech
 - [ ] Žádné citlivé údaje v commitu
 - [ ] Aplikace se spustí bez chyb
-- [ ] Otestováno na skutečném zařízení (pokud možno)
+- [ ] Otestováno na skutečném zařízení nebo přes web UI (pokud možno)
 - [ ] Aktualizována dokumentace (pokud potřeba)
 - [ ] Commit messages jsou srozumitelné
 

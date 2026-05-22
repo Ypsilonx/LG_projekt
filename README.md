@@ -1,495 +1,185 @@
 
-# LG ThinQ Klimatizace - Ovládání & Plánování
+# LG ThinQ Klimatizace – Ovládání & Plánování
 
-Moderní Python/FastAPI aplikace pro kompletní ovládání LG ThinQ klimatizací s webovým rozhraním, Docker nasazením, real-time MQTT push notifikacemi a pokročilými funkcemi plánování.
+FastAPI webová aplikace pro ovládání LG ThinQ klimatizací. Real-time MQTT push, plánování (HAND scheduler), sezónní automatika, ČHMÚ forecast. Primárně pro trvalé nasazení v domácí síti přes Docker.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: UTF-8](https://img.shields.io/badge/code%20style-UTF--8-brightgreen.svg)](https://en.wikipedia.org/wiki/UTF-8)
 
-## ✨ Hlavní funkce
+## Funkce
 
-- 🎨 **Moderní tmavé GUI** - responzivní rozhraní s hover efekty
-- 🧭 **Jasné režimy AUTO/HAND** - viditelný stav řízení s přepínačem v horním panelu
-- 🌡️ **Kompletní ovládání klimatizace** - zapnutí/vypnutí, režimy, teplota, větrání
-- 📅 **Pokročilé plánování (HAND)** - časové harmonogramy dostupné v ručním režimu
-- 🌦️ **Sezónní pravidla automatiky** - chlazení jen ve vybraných obdobích (výchozí: léto)
-- 🌤️ **ČHMÚ weather planning** - hodinový meteogram (POI 510) + fallback region RPZL, horizont 24h, refresh 3h
-- 📊 **Vizualizace počasí v GUI** - graf intervalů, tabulka min/max a stav korekce AC čidla
-- 🌡️ **Teplota čidla s offsetem** - UI zobrazuje pouze výslednou korigovanou hodnotu
-- ⚡ **Energy reporting** - den/týden/měsíc/rok + export CSV
-- ⚡ **Optimalizované API** - smart caching, automatické retry při chybách
-- 🔧 **CLI i GUI režim** - flexibilní použití
-- 💨 **Pokročilé větrání** - směr proudění, síla větru, rotace
-- ⏰ **Časovače** - sleep timer s rychlými tlačítky
-- 💡 **LED indikátory** - vizuální zpětná vazba o stavu zařízení
-- 🌍 **Multi-platform** - Windows, Linux, macOS
-- 🌐 **Webové rozhraní** - FastAPI + WebSocket, real-time MQTT push, Tailwind CSS, žádná instalace klienta
-- 🐳 **Docker nasazení** - `docker-compose up`, dostupné z domácí sítě i přes Cloudflare Tunnel
+- **Webové rozhraní** – single-page dashboard (Tailwind CSS + Alpine.js), tmavý motiv, bez instalace klienta
+- **Real-time push** – MQTT → WebSocket; stavové změny se promítají automaticky (indikátor "Push"/"Offline")
+- **Ovládání klimatizace** – power, režimy (COOL/HEAT/FAN/AUTO/AIR_DRY), teplota 16–30 °C, větrání, směr lamel
+- **AUTO / HAND** – AUTO = sezónní pravidla + PID regulace; HAND = ruční ovládání + HAND scheduler
+- **HAND scheduler** – CRUD plánů: čas od/do, dny v týdnu, akce (mód/teplota/ventilátor), enable/disable
+- **ČHMÚ forecast** – meteogram POI 510, horizont 24 h, cache 3 h, fallback na region RPZL; zobrazení teploty, oblačnosti, srážek, větru a vlhkosti
+- **Sezónní automatika** – zima/přechod/léto, blokace COOL mimo léto, PID-like regulace cílové teploty
+- **Energy reporting** – den/týden/měsíc/rok, export CSV
+- **Docker** – `docker-compose up`, dostupné z domácí sítě, volitelný Cloudflare Tunnel
+- **CLI** – `--mode cli --status`, `--list-devices`, `--command` pro smoke testy
 
-## 📸 Screenshot
-
-![LG ThinQ GUI](docs/screenshot.png)
-
-## 🚀 Rychlé spuštění
-
-### Předpoklady
-
-- Python 3.12 nebo novější
-- LG ThinQ účet s registrovanými klimatizacemi
-- **LG Developer API přístup** (viz níže)
-
-## 📁 Architektura projektu
+## Architektura projektu
 
 ```
 src/
-├── main.py                    # Univerzální vstupní bod (CLI/GUI/web)
-├── server_api.py              # ThinQ API komunikace, MQTT klient
-├── command_executor.py        # Sdílená logika provádění příkazů (CLI + web)
-├── command_policy.py          # Plán kroků, preconditions, skip logika
-├── klima_logic.py             # Payload generátor pro všechny příkazy
-├── energy_analytics.py        # Rozsahy energy dotazů + export CSV
-├── weather_provider.py        # ČHMÚ provider + weather-based mode adjustments
-├── automation_rules.py        # Sezónní pravidla a blokace
-├── thermal_controller.py      # PID řízení teploty
-├── frontend.py                # CLI rozhraní (legacy)
-├── gui/                       # Desktopové GUI (tkinter, volitelný fallback)
-│   ├── app.py
-│   ├── controls.py
-│   ├── scheduler.py
-│   ├── theme.py
-│   └── widgets.py
-└── web/                       # Webová aplikace (FastAPI)
-    ├── app.py                 # FastAPI instance, lifespan, MQTT→WS bridge
+├── main.py                # Vstupní bod (--mode web | cli | gui)
+├── server_api.py          # ThinQ API komunikace + MQTT klient
+├── command_executor.py    # Sdílená logika provádění příkazů
+├── command_policy.py      # Preconditions + plán kroků příkazů
+├── klima_logic.py         # Payload generátor pro příkazy
+├── energy_analytics.py    # Energy dotazy + CSV export
+├── weather_provider.py    # ČHMÚ meteogram + regionální fallback
+├── automation_rules.py    # Sezónní pravidla a blokace
+├── thermal_controller.py  # PID-like regulace teploty
+├── frontend.py            # CLI rozhraní (legacy)
+├── gui/                   # Desktopové GUI – tkinter (legacy fallback)
+└── web/                   # Webová aplikace (primární)
+    ├── app.py             # FastAPI instance, lifespan, MQTT→WS bridge
     ├── routes/
-    │   ├── devices.py         # GET /api/devices/, GET /api/devices/{id}/status
-    │   ├── control.py         # POST /api/devices/{id}/command
-    │   └── ws.py              # WebSocket /ws – real-time MQTT push
-    ├── templates/             # Jinja2 HTML šablony (Tailwind CDN + Alpine.js)
-    └── static/                # CSS, JS, obrázky
+    │   ├── devices.py     # GET /api/devices/, /api/devices/{id}/status
+    │   ├── control.py     # POST /api/devices/{id}/command
+    │   ├── mode.py        # GET/POST /api/mode/  (AUTO ↔ HAND)
+    │   ├── schedule.py    # CRUD /api/schedule/entries
+    │   ├── weather.py     # GET /api/weather/forecast, /config
+    │   └── ws.py          # WebSocket /ws – real-time MQTT push
+    ├── templates/         # Jinja2 šablony (Tailwind CDN + Alpine.js)
+    └── static/
 
-data/                          # Montováno jako Docker volume (není součástí obrazu)
-├── config.json                # API přihlašovací údaje (⚠️ necommitovat)
-├── devices.json               # Seznam zařízení (⚠️ necommitovat)
-├── device_profile.json        # Profil zařízení a podporované funkce
-├── schedule.json              # Časové plány a harmonogramy
-└── automation_rules.json      # Sezónní pravidla automatizace
+data/                      # Docker volume (necommitovat config.json, devices.json)
+├── config.json            # API přihlašovací údaje ⚠️
+├── devices.json           # Seznam zařízení ⚠️
+├── device_profile.json    # Profil zařízení
+├── schedule.json          # Časové plány HAND scheduleru
+└── automation_rules.json  # Sezónní pravidla
 
-Dockerfile                     # python:3.12-slim, non-root uživatel (uid 1000)
-docker-compose.yml             # Služby: lg-klimatizace + cloudflared (volitelné)
-.dockerignore                  # Vylučuje .venv/, data/config.json, data/devices.json
+Dockerfile                 # python:3.12-slim, non-root uid 1000
+docker-compose.yml         # lg-klimatizace + cloudflared (volitelné)
 ```
 
-### � Krok 1: Získání LG ThinQ API přístupových údajů
+## Rychlé spuštění
 
-**DŮLEŽITÉ:** Tento projekt vyžaduje API přihlašovací údaje od LG.
+### Předpoklady
 
-1. **Navštivte LG Developer Portal:**
-   ```
-   https://developer.lgaccount.com/
-   ```
+- Python 3.12+
+- LG ThinQ účet s registrovanými zařízeními
+- LG Developer API přístup: <https://developer.lgaccount.com/>
+  Získejte: `access_token`, `client_id`, `device_id`
 
-2. **Zaregistrujte se a vytvořte aplikaci:**
-   - Přihlaste se nebo vytvořte nový účet
-   - V sekci "My Applications" klikněte na "Create Application"
-   - Vyplňte informace o aplikaci
-   - Získáte: `Client ID`
+### Instalace
 
-3. **Autorizujte své zařízení:**
-   - Propojte svůj LG ThinQ účet s vývojářskou aplikací
-   - Vytvořte osobní access token (PAT) pro ThinQ API
-   - Získejte seznam vašich zařízení a jejich ID
-
-4. **Poznamenejte si tyto údaje:**
-   - ✅ Access Token (PAT)
-   - ✅ Client ID
-   - ✅ Device ID (ID vaší klimatizace)
-
-> 💡 **Tip:** Podrobný návod naleznete v [LG ThinQ Connect API dokumentaci](https://developer.lgaccount.com/thinq-connect)
-
----
-
-### 🔧 Krok 2: Instalace projektu
-
-#### Klonování repozitáře
-```bash
-git clone https://github.com/your-username/lg-thinq-climate-control.git
-cd lg-thinq-climate-control
-```
-
-#### Vytvoření virtuálního prostředí
-```bash
+```powershell
 # Windows
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python setup.py          # vytvoří konfigurační soubory z šablon
+```
 
+```bash
 # Linux/macOS
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-#### Instalace závislostí
-```bash
 pip install -r requirements.txt
-```
-
----
-
-### ⚙️ Krok 3: Konfigurace
-
-#### Automatická inicializace (doporučeno)
-```bash
 python setup.py
 ```
 
-Tento script automaticky:
-- ✅ Vytvoří konfigurační soubory z šablon
-- ✅ Připraví adresářovou strukturu
-- ✅ Zobrazí další kroky
+### Konfigurace
 
-#### Manuální konfigurace
-
-1. **Zkopírujte šablony:**
-   ```bash
-   cp data/config.json.example data/config.json
-   cp data/devices.json.example data/devices.json
-   cp data/schedule.json.example data/schedule.json
-   cp data/automation_rules.json.example data/automation_rules.json
-   ```
-
-2. **Upravte `data/config.json`:**
-   ```json
-   {
-       "access_token": "váš_access_token_zde",
-       "country_code": "CZ",
-       "client_id": "váš_client_id_zde"
-   }
-   ```
-
-3. **Upravte `data/devices.json`:**
-   ```json
-   [
-     {
-          "deviceId": "vaše_device_id_zde",
-          "deviceInfo": {
-             "deviceType": "DEVICE_AIR_CONDITIONER",
-             "modelName": "LG AC Model",
-             "alias": "Obývací pokoj",
-             "reportable": true
-          }
-     }
-   ]
-   ```
-
-4. **(Volitelné) Upravte `data/automation_rules.json`:**
-    ```json
-    {
-       "season_months": {
-          "WINTER": [11, 12, 1, 2, 3],
-          "TRANSITION": [4, 5, 9, 10],
-          "SUMMER": [6, 7, 8]
-       },
-       "cooling_allowed_seasons": ["SUMMER"],
-       "cooling_block_fallback_mode": "HEAT",
-       "weather": {
-          "enabled": true,
-          "provider": "CHMI_METEOGRAM",
-          "chmi_region_code": "RPZL",
-          "chmi_location_label": "Bynina (Valasske Mezirici)",
-          "chmi_meteogram_poi_id": "510",
-          "chmi_meteogram_x": null,
-          "chmi_meteogram_y": null,
-          "sensor_offset_c": -2.0,
-          "forecast_horizon_hours": 24,
-          "refresh_interval_hours": 3,
-          "use_short_term_forecast": true
-       }
-    }
-    ```
-
-    Výchozí pravidlo: mimo léto je režim `COOL` blokovaný a automatika použije fallback `HEAT`.
-   Pokud je weather planner aktivní, automatika navíc využívá ČHMÚ forecast pro úpravu režimu
-    směrem k úspoře energie (např. `COOL/HEAT -> FAN/AUTO`, pokud forecast i korigovaný senzor
-   nepotvrzují potřebu topení/chlazení). Výchozí provider je `CHMI_METEOGRAM` (POI 510), při
-   chybě se aplikace automaticky přepne na regionální `CHMI` fallback (`chmi_region_code`).
-
-> ⚠️ **BEZPEČNOST:** Nikdy nesdílejte soubory `config.json` a `devices.json`! Obsahují citlivé údaje.
-
----
-
-### 🎯 Krok 4: Spuštění aplikace
-
-**GUI režim (výchozí - doporučeno):**
-```bash
-python src/main.py
-# nebo
-python src/main.py --mode gui
+**`data/config.json`:**
+```json
+{
+    "access_token": "váš_access_token",
+    "country_code": "CZ",
+    "client_id": "váš_client_id"
+}
 ```
 
-**CLI režim:**
-```bash
-# Výpis zařízení a aliasů
-python src/main.py --mode cli --list-devices
+**`data/devices.json`:**
+```json
+[{
+    "deviceId": "vaše_device_id",
+    "deviceInfo": {
+        "deviceType": "DEVICE_AIR_CONDITIONER",
+        "modelName": "LG AC Model",
+        "alias": "Obývací pokoj",
+        "reportable": true
+    }
+}]
+```
 
-# Zobrazení stavu zařízení
+Volitelně `data/automation_rules.json` – sezóny, weather provider (POI, region), sensor offset.
+
+> ⚠️ Nikdy necommitujte `config.json` ani `devices.json`!
+
+### Spuštění
+
+```powershell
+# Web server (doporučeno)
+python src/main.py --mode web
+# → http://localhost:8000    Swagger: http://localhost:8000/docs
+
+# CLI (smoke test)
 python src/main.py --mode cli --status
 
-# Zobrazení stavu podle aliasu zařízení
-python src/main.py --mode cli --status --device-alias "Obývací pokoj"
-
-# Provedení příkazu
-python src/main.py --mode cli --command power_on
-```
-
-**Webový server (přístup z prohlížeče nebo domácí sítě):**
-```bash
-python src/main.py --mode web
-# Server dostupný na http://localhost:8000
-# Swagger API docs: http://localhost:8000/docs
-```
-
-**Docker (doporučeno pro trvalé nasazení na Linuxu):**
-```bash
-# Ujistěte se, že data/config.json a data/devices.json jsou připraveny
+# Docker (trvalé nasazení)
 docker-compose up -d
-
-# Stav a logy
-docker-compose ps
 docker-compose logs -f lg-klimatizace
 ```
 
-Server poběží na portu 8000, při restartu hosta se automaticky nastartuje (`restart: unless-stopped`).  
-Pro přístup mimo domácí síť odkomentujte sekci `cloudflared` v `docker-compose.yml` a nastavte proměnnou `CLOUDFLARE_TUNNEL_TOKEN`.
+## HAND Scheduler – formát záznamu
 
----
-
-## 🔒 Bezpečnost
-
-### Ochrana citlivých údajů
-
-Všechny soubory obsahující tokeny, API klíče a ID zařízení jsou **automaticky ignorovány** v `.gitignore`:
-
-```
-✅ Bezpečné (commitovány):
-- data/config.json.example      # Šablona
-- data/devices.json.example     # Šablona
-- data/schedule.json.example    # Šablona
-
-❌ Ignorované (NECOMMITUJTE):
-- data/config.json              # Obsahuje tokeny!
-- data/devices.json             # Obsahuje device ID!
-- data/schedule.json            # Osobní plány
+```json
+{
+    "id": "uuid",
+    "name": "Ranní chlazení",
+    "enabled": true,
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "time_on": "07:30",
+    "time_off": "09:00",
+    "action": { "mode": "COOL", "temperature": 22.0, "wind_strength": "MID" }
+}
 ```
 
-### ⚠️ PŘED PUBLIKACÍ PROJEKTU:
-1. ✅ Nikdy necommitujte soubory bez `.example` přípony
-2. ✅ Zkontrolujte `.gitignore` a `.dockerignore` před každým pushem
-3. ✅ Používejte environment variables pro CI/CD a Docker (`CLOUDFLARE_TUNNEL_TOKEN`)
-4. ✅ Rotujte API klíče pravidelně
-5. ✅ Token Cloudflare Tunnel ukládejte pouze jako systémovou proměnnou, nikdy do souborů
+`days: []` = každý den; `time_off: null` = bez automatického vypnutí;
+`mode / temperature / wind_strength: null` = daný parametr neměnit.
 
----
+## Příkazy API
 
-## 🎯 Použití GUI aplikace
+| Kategorie | Příkaz | Hodnoty |
+|-----------|--------|---------|
+| Power | `power_on`, `power_off` | – |
+| Režim | `change_mode` | `COOL` `HEAT` `FAN` `AUTO` `AIR_DRY` |
+| Teplota | `set_temperature` | 16–30 °C |
+| Větrání | `set_wind_strength` | `AUTO` `LOW` `MID` `HIGH` |
+| Směr | `set_wind_direction` | nahoru/dolů, vlevo/vpravo |
+| Timer | `set_sleep_timer`, `cancel_all_timers` | minuty |
 
-### Základní ovládání
-- **🖐️ HAND / 🤖 AUTO** - přepnutí mezi ručním a automatickým řízením
-- **⚡ Zapnutí/Vypnutí** - hlavní tlačítko power
-- **🌡️ Režimy** - COOL, HEAT, FAN, AUTO, AIR_DRY
-- **🌡️ Teplota** - přesné nastavení s slidérem
-- **💨 Větrání (HAND)** - síla větru + směr proudění v rozbalitelné sekci ručního režimu
-- **⚡ Úspora energie** - power save režim
+## Bezpečnost
 
-### Časovače
-- **⏰ Sleep Timer** - rychlé tlačítka 30min, 1h, 2h
-- **📅 Plánování (HAND)** - pokročilé časové harmonogramy jen v HAND režimu
+`.gitignore` a `.dockerignore` automaticky vylučují citlivé soubory:
 
-### Vizualizace počasí
-- **🌤️ Panel Počasí (ČHMÚ)** - zobrazuje načtený provider, POI/region a čas poslední aktualizace
-- **📉 Graf forecastu** - intervalové min/max teploty pro zvolený horizont (výchozí 24h)
-- **🧮 Korekce AC čidla** - v UI se zobrazuje pouze výsledná teplota po aplikaci offsetu
+| Commitovat | Necommitovat |
+|------------|--------------|
+| `data/*.example` | `data/config.json` |
+| `src/`, `Dockerfile` | `data/devices.json` |
+| `docker-compose.yml` | `data/schedule.json` |
 
-### Spotřeba energie
-- **⚡ Přehled spotřeby** - samostatné pohledy Den / Týden / Měsíc / Rok
-- **📊 Graf hodnot** - sloupcová vizualizace spotřeby dle zvoleného období
-- **⤓ CSV export** - stažení právě zobrazené datové sady pro další analýzu
+- Token Cloudflare Tunnel ukládejte jako systémovou proměnnou (`CLOUDFLARE_TUNNEL_TOKEN`), nikdy do souborů.
+- Rotujte API klíče pravidelně.
 
-Poznámka k realtime příkonu:
-- ThinQ status payload ho nemusí poskytovat konzistentně u všech modelů.
-- Pokud API aktuální příkon nevrátí, GUI to explicitně označí jako nedostupné.
+## Řešení problémů
 
-### Pokročilé plánování
-Vytvářejte komplexní plány jako:
-- "8:00 - zapni FAN na AUTO na 2 hodiny"
-- "12:00 - přepni na COOL, nastav 22°C"
-- "22:00 - zapni sleep timer na 30 minut"
+| Chyba | Řešení |
+|-------|--------|
+| `FileNotFoundError: config.json` | Spusťte `python setup.py` |
+| `401 / 403` | Zkontrolujte `data/config.json`, ověřte PAT v LG Developer portálu |
+| `503 Service Unavailable` | LG API dočasně nedostupné; aplikace opakuje automaticky (3×) |
+| `NOT_PROVIDED_FEATURE` | Funkce není modelem podporována – viz `device_profile.json` |
+| Rozbité české znaky (Linux) | `export LANG=cs_CZ.UTF-8` |
 
-Režimové řízení:
-- `🖐️ HAND režim` zapne ruční řízení (včetně plánovače a pokročilých prvků větrání).
-- `🤖 AUTO režim` vrátí řízení na pravidla + PID regulaci.
+## Dokumentace
 
-## 🛠️ Technické detaily
-
-### Provozní playbook
-
-- Podrobné pořadí příkazů, preconditions a limit policy: `docs/command-order-playbook.md`
-- Roadmap scheduleru, počasí a modernizace GUI: `docs/scheduler-weather-roadmap.md`
-
-### Podporované příkazy
-- **Power:** `POWER_ON`, `POWER_OFF`
-- **Režimy:** `COOL`, `HEAT`, `FAN`, `AUTO`, `AIR_DRY`
-- **Teplota:** 16-30°C (dle režimu)
-- **Větrání:** `AUTO`, `LOW`, `MID`, `HIGH`
-- **Směr:** rotace nahoru/dolů, vlevo/vpravo
-- **Timery:** sleep timer, relativní časovače
-
-### API Optimalizace
-- **Smart caching** - ukládání posledního stavu
-- **Change detection** - API volání jen při změně
-- **Error handling** - robustní zpracování chyb
-- **Connection pooling** - efektivní síťové připojení
-
-### Kompatibilita
-- **Python:** 3.12+
-- **OS:** Windows, Linux, macOS
-- **LG ThinQ:** všechna podporovaná klimatizační zařízení
-
-## 🐛 Řešení problémů
-
-### Časté chyby
-
-#### `FileNotFoundError: config.json not found`
-**Řešení:** Spusťte `python setup.py` nebo vytvořte konfigurační soubory z šablon.
-
-#### `401 Unauthorized` nebo `403 Forbidden`
-**Řešení:** 
-- Zkontrolujte API přihlašovací údaje v `data/config.json`
-- Ověřte, že máte správně nastavené oprávnění v LG Developer portálu
-- Vygenerujte nové API klíče
-
-#### `503 Service Unavailable`
-**Řešení:** 
-- LG API servery jsou dočasně nedostupné
-- Aplikace automaticky opakuje dotazy (3× s 2s pauzou)
-- Počkejte 10-15 minut a zkuste znovu
-
-#### `NOT_PROVIDED_FEATURE`
-**Řešení:** Funkce není vaším zařízením podporována - zkontrolujte `device_profile.json`
-
-#### `COMMAND_NOT_SUPPORTED_IN_POWER_OFF`
-**Řešení:** Zařízení musí být zapnuté pro tento příkaz
-
-#### Rozbité české znaky na Linuxu
-**Řešení:**
-```bash
-export LANG=cs_CZ.UTF-8
-export LC_ALL=cs_CZ.UTF-8
-```
-
-### Debug režim
-```bash
-# Windows
-$env:PYTHONPATH="src"
-python src/main.py
-
-# Linux/macOS
-export PYTHONPATH=src
-python src/main.py
-```
-
----
-
-## � Dokumentace API
-
-### Podporované příkazy
-
-| Kategorie | Příkazy | Hodnoty |
-|-----------|---------|---------|
-| **Power** | `power_on`, `power_off`, `toggle_power` | - |
-| **Režimy** | `change_mode` | `COOL`, `HEAT`, `FAN`, `AUTO`, `AIR_DRY` |
-| **Teplota** | `set_temperature` | 16-30°C (podle režimu) |
-| **Větrání** | `set_wind_strength` | `AUTO`, `LOW`, `MID`, `HIGH` |
-| **Směr** | `set_wind_direction` | nahoru/dolů, vlevo/vpravo |
-| **Timery** | `set_sleep_timer` | minuty |
-
-### API Optimalizace
-- ✅ **Smart caching** - ukládání posledního stavu
-- ✅ **Change detection** - API volání jen při změně
-- ✅ **Retry logic** - automatické opakování při 503 chybách
-- ✅ **Error handling** - robustní zpracování chyb
-- ✅ **Connection pooling** - efektivní síťové připojení
-
----
-
-## 🤝 Přispívání
-
-Contributions are welcome! 🎉
-
-### Jak přispět:
-
-1. **Fork** projektu
-2. Vytvořte **feature branch**
-   ```bash
-   git checkout -b feature/AmazingFeature
-   ```
-3. **Commit** změny
-   ```bash
-   git commit -m 'Add some AmazingFeature'
-   ```
-4. **Push** do branch
-   ```bash
-   git push origin feature/AmazingFeature
-   ```
-5. Otevřete **Pull Request**
-
-### Coding Standards:
-- ✅ UTF-8 kódování ve všech souborech
-- ✅ PEP 8 style guide
-- ✅ Docstrings pro všechny funkce
-- ✅ Type hints kde je to vhodné
-- ✅ Testování před submitem
-
----
-
-## 📄 Licence
-
-Tento projekt je licencován pod **MIT License** - viz [LICENSE](LICENSE) soubor pro detaily.
-
-## 👨‍💻 Autor & Poděkování
-
-Vytvořeno s pomocí GitHub Copilot pro efektivní ovládání LG ThinQ zařízení.
-
-### Použité knihovny:
-- [thinqconnect](https://github.com/thinq-connect/pythinqconnect) - Oficiální LG ThinQ Python SDK
-- [aiohttp](https://github.com/aio-libs/aiohttp) - Asynchronní HTTP klient
-- [FastAPI](https://fastapi.tiangolo.com/) - Webový framework (async, OpenAPI, WebSocket)
-- [uvicorn](https://www.uvicorn.org/) - ASGI server
-- [Jinja2](https://jinja.palletsprojects.com/) - HTML šablony
-- [tkinter](https://docs.python.org/3/library/tkinter.html) - Desktopové GUI (volitelný fallback, pouze GUI/CLI režim)
-
----
-
-## 🔮 Roadmap
-
-- [ ] Pokročilé energetické metriky a statistiky
-- [ ] Push notifikace (desktop/mobile)
-- [x] Webové rozhraní (FastAPI + WebSocket + Tailwind CSS)
-- [ ] Mobile app (React Native/Flutter)
-- [ ] Hlasové ovládání (Google Assistant/Alexa)
-- [x] Docker kontejnerizace (docker-compose + Cloudflare Tunnel)
-- [ ] Home Assistant integrace
-- [ ] Multi-device management (více klimatizací najednou)
-
----
-
-## ⭐ Podpořte projekt
-
-Pokud se vám projekt líbí, dejte mu hvězdičku na GitHubu! ⭐
-
-## 📧 Kontakt
-
-Máte otázky? Otevřete [Issue](https://github.com/your-username/lg-thinq-climate-control/issues) nebo [Discussion](https://github.com/your-username/lg-thinq-climate-control/discussions).
-
----
-
-**Made with ❤️ and ☕**
+- Pořadí příkazů, preconditions, retry policy: `docs/command-order-playbook.md`
+- Implementované fáze (automatika, weather, scheduler, web): `docs/scheduler-weather-roadmap.md`
+- Přispívání: `CONTRIBUTING.md`
