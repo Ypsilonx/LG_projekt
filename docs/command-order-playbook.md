@@ -85,9 +85,13 @@ Dulezite:
   - src/server_api.py
 - Command policy (preconditions + plan kroku):
   - src/command_policy.py
+- Sdilena logika provedeni prikazu (CLI i web):
+  - src/command_executor.py
+- Web API endpoint pro prikazy:
+  - src/web/routes/control.py
 - GUI serializace a slouceny refresh:
   - src/gui/app.py
-- CLI aplikace stejne policy jako GUI:
+- CLI prikazy (parsovani + execute):
   - src/main.py
 
 ## 7. Operacni checklist (pro budoucnost)
@@ -99,9 +103,10 @@ Pri navratu k projektu po delsi dobe:
 3. Overit, ze config.json obsahuje platny PAT a client_id.
 4. Overit, ze devices.json ma spravne deviceId.
 5. Spustit CLI --status pro rychly smoke test.
-6. Spustit GUI a overit MQTT connect.
-7. Otestovat jeden bezpecny prikaz (power_on nebo power_off).
-8. Zkontrolovat logy na chybove kody 1306, 2210, 2304.
+6. Nebo spustit web (--mode web) a overit /health endpoint a MQTT stav v logu.
+7. Spustit GUI a overit MQTT connect.
+8. Otestovat jeden bezpecny prikaz (power_on nebo power_off).
+9. Zkontrolovat logy na chybove kody 1306, 2210, 2304.
 
 ## 8. Rozsireni do budoucna
 

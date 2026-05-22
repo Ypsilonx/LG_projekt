@@ -1,7 +1,7 @@
 
 # LG ThinQ Klimatizace - Ovládání & Plánování
 
-Moderní Python aplikace pro kompletní ovládání LG ThinQ klimatizací s pokročilými funkcemi plánování a tmavým GUI.
+Moderní Python/FastAPI aplikace pro kompletní ovládání LG ThinQ klimatizací s webovým rozhraním, Docker nasazením, real-time MQTT push notifikacemi a pokročilými funkcemi plánování.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -24,6 +24,8 @@ Moderní Python aplikace pro kompletní ovládání LG ThinQ klimatizací s pokr
 - ⏰ **Časovače** - sleep timer s rychlými tlačítky
 - 💡 **LED indikátory** - vizuální zpětná vazba o stavu zařízení
 - 🌍 **Multi-platform** - Windows, Linux, macOS
+- 🌐 **Webové rozhraní** - FastAPI + WebSocket, real-time MQTT push, Tailwind CSS, žádná instalace klienta
+- 🐳 **Docker nasazení** - `docker-compose up`, dostupné z domácí sítě i přes Cloudflare Tunnel
 
 ## 📸 Screenshot
 
@@ -41,25 +43,41 @@ Moderní Python aplikace pro kompletní ovládání LG ThinQ klimatizací s pokr
 
 ```
 src/
-├── main.py                    # Univerzální vstupní bod (CLI/GUI)
-├── server_api.py             # ThinQ API komunikace s caching
-├── klima_logic.py            # Payload generátor pro všechny příkazy
-├── energy_analytics.py       # Rozsahy energy dotazů + export CSV
+├── main.py                    # Univerzální vstupní bod (CLI/GUI/web)
+├── server_api.py              # ThinQ API komunikace, MQTT klient
+├── command_executor.py        # Sdílená logika provádění příkazů (CLI + web)
+├── command_policy.py          # Plán kroků, preconditions, skip logika
+├── klima_logic.py             # Payload generátor pro všechny příkazy
+├── energy_analytics.py        # Rozsahy energy dotazů + export CSV
 ├── weather_provider.py        # ČHMÚ provider + weather-based mode adjustments
-├── frontend.py               # CLI rozhraní (legacy)
-└── gui/                      # Modularizované GUI komponenty
-    ├── app.py                # Hlavní aplikace
-    ├── theme.py              # Tmavé téma s hover fixes
-    ├── controls.py           # Ovládací prvky klimatizace
-    ├── scheduler.py          # Pokročilý plánovač
-    └── widgets.py            # LED indikátory a custom widgety
+├── automation_rules.py        # Sezónní pravidla a blokace
+├── thermal_controller.py      # PID řízení teploty
+├── frontend.py                # CLI rozhraní (legacy)
+├── gui/                       # Desktopové GUI (tkinter, volitelný fallback)
+│   ├── app.py
+│   ├── controls.py
+│   ├── scheduler.py
+│   ├── theme.py
+│   └── widgets.py
+└── web/                       # Webová aplikace (FastAPI)
+    ├── app.py                 # FastAPI instance, lifespan, MQTT→WS bridge
+    ├── routes/
+    │   ├── devices.py         # GET /api/devices/, GET /api/devices/{id}/status
+    │   ├── control.py         # POST /api/devices/{id}/command
+    │   └── ws.py              # WebSocket /ws – real-time MQTT push
+    ├── templates/             # Jinja2 HTML šablony (Tailwind CDN + Alpine.js)
+    └── static/                # CSS, JS, obrázky
 
-data/
-├── config.json               # API přihlašovací údaje
-├── devices.json              # Seznam zařízení
-├── device_profile.json       # Profil zařízení a podporované funkce
-├── schedule.json             # Časové plány a harmonogramy
-└── automation_rules.json     # Sezónní pravidla automatizace
+data/                          # Montováno jako Docker volume (není součástí obrazu)
+├── config.json                # API přihlašovací údaje (⚠️ necommitovat)
+├── devices.json               # Seznam zařízení (⚠️ necommitovat)
+├── device_profile.json        # Profil zařízení a podporované funkce
+├── schedule.json              # Časové plány a harmonogramy
+└── automation_rules.json      # Sezónní pravidla automatizace
+
+Dockerfile                     # python:3.12-slim, non-root uživatel (uid 1000)
+docker-compose.yml             # Služby: lg-klimatizace + cloudflared (volitelné)
+.dockerignore                  # Vylučuje .venv/, data/config.json, data/devices.json
 ```
 
 ### � Krok 1: Získání LG ThinQ API přístupových údajů
@@ -223,6 +241,26 @@ python src/main.py --mode cli --status --device-alias "Obývací pokoj"
 python src/main.py --mode cli --command power_on
 ```
 
+**Webový server (přístup z prohlížeče nebo domácí sítě):**
+```bash
+python src/main.py --mode web
+# Server dostupný na http://localhost:8000
+# Swagger API docs: http://localhost:8000/docs
+```
+
+**Docker (doporučeno pro trvalé nasazení na Linuxu):**
+```bash
+# Ujistěte se, že data/config.json a data/devices.json jsou připraveny
+docker-compose up -d
+
+# Stav a logy
+docker-compose ps
+docker-compose logs -f lg-klimatizace
+```
+
+Server poběží na portu 8000, při restartu hosta se automaticky nastartuje (`restart: unless-stopped`).  
+Pro přístup mimo domácí síť odkomentujte sekci `cloudflared` v `docker-compose.yml` a nastavte proměnnou `CLOUDFLARE_TUNNEL_TOKEN`.
+
 ---
 
 ## 🔒 Bezpečnost
@@ -245,9 +283,10 @@ Všechny soubory obsahující tokeny, API klíče a ID zařízení jsou **automa
 
 ### ⚠️ PŘED PUBLIKACÍ PROJEKTU:
 1. ✅ Nikdy necommitujte soubory bez `.example` přípony
-2. ✅ Zkontrolujte `.gitignore` před každým pushem
-3. ✅ Používejte environment variables pro CI/CD
+2. ✅ Zkontrolujte `.gitignore` a `.dockerignore` před každým pushem
+3. ✅ Používejte environment variables pro CI/CD a Docker (`CLOUDFLARE_TUNNEL_TOKEN`)
 4. ✅ Rotujte API klíče pravidelně
+5. ✅ Token Cloudflare Tunnel ukládejte pouze jako systémovou proměnnou, nikdy do souborů
 
 ---
 
@@ -423,7 +462,10 @@ Vytvořeno s pomocí GitHub Copilot pro efektivní ovládání LG ThinQ zaříze
 ### Použité knihovny:
 - [thinqconnect](https://github.com/thinq-connect/pythinqconnect) - Oficiální LG ThinQ Python SDK
 - [aiohttp](https://github.com/aio-libs/aiohttp) - Asynchronní HTTP klient
-- [tkinter](https://docs.python.org/3/library/tkinter.html) - GUI framework
+- [FastAPI](https://fastapi.tiangolo.com/) - Webový framework (async, OpenAPI, WebSocket)
+- [uvicorn](https://www.uvicorn.org/) - ASGI server
+- [Jinja2](https://jinja.palletsprojects.com/) - HTML šablony
+- [tkinter](https://docs.python.org/3/library/tkinter.html) - Desktopové GUI (volitelný fallback, pouze GUI/CLI režim)
 
 ---
 
@@ -431,10 +473,10 @@ Vytvořeno s pomocí GitHub Copilot pro efektivní ovládání LG ThinQ zaříze
 
 - [ ] Pokročilé energetické metriky a statistiky
 - [ ] Push notifikace (desktop/mobile)
-- [ ] Webové rozhraní (Flask/FastAPI)
+- [x] Webové rozhraní (FastAPI + WebSocket + Tailwind CSS)
 - [ ] Mobile app (React Native/Flutter)
 - [ ] Hlasové ovládání (Google Assistant/Alexa)
-- [ ] Docker kontejnerizace
+- [x] Docker kontejnerizace (docker-compose + Cloudflare Tunnel)
 - [ ] Home Assistant integrace
 - [ ] Multi-device management (více klimatizací najednou)
 

@@ -88,16 +88,28 @@ Co pribude:
 Vystup:
 - Predvidatelne a stabilni chovani i pri vice pravidlech.
 
-### Faze D: Modernizace GUI
+### Faze D: Modernizace GUI / webovy dashboard
 
-Co pribude:
-- Dashboard s kartami a stavy.
-- Builder pravidel (krokovy wizard).
-- Timeline planu a panel Proc se to rozhodlo.
-- Test pravidla nanečisto nad historickym vzorkem pocasi.
+Stav: v implementaci (webova aplikace nahrazuje desktopove GUI).
+
+Co je hotovo:
+- FastAPI webovy server s MQTT real-time push pres WebSocket.
+- REST API pro cteni stavu zarizeni a provedeni prikazu.
+- Zakladni HTML sablony (Tailwind CDN + Alpine.js).
+- Docker kontejnerizace (docker-compose + Cloudflare Tunnel).
+
+Co jeste pribude:
+- Dashboard s kartami a live stavy zarizeni.
+- Ovladaci prvky v prohlizeci (moc, rezim, teplota, vitr).
+- Panel pro zobrazeni a editaci automatizacnich pravidel.
+- Panel pro spravу casovych planu.
+- Panel pocasi (CHMU forecast).
+- Builder pravidel (krokovy wizard) – nizka priorita.
+- Test pravidla nanecisto nad historickym vzorkem pocasi – nizka priorita.
 
 Vystup:
-- GUI bude prehlednejsi, moderni a pouzitelne i pro slozite scenare.
+- Webova aplikace bude pristupna z domaci site i z internetu (Cloudflare Tunnel)
+  bez nutnosti instalace klienta.
 
 ### Faze E: Telemetrie, testy, dokumentace
 
