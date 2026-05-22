@@ -1,23 +1,1107 @@
 {% extends "base.html" %}
-{% set active_page = "dashboard" %}
-
-{% block title %}Dashboard – LG Klimatizace{% endblock %}
+{% block title %}LG Klimatizace{% endblock %}
 
 {% block content %}
-<div class="mb-6">
-    <h1 class="text-2xl font-bold text-slate-800">Dashboard</h1>
-    <p class="text-slate-500 text-sm mt-1">Přehled stavu a ovládání klimatizace</p>
-</div>
+<div x-data="dashboard" x-init="init()">
 
-<!-- Placeholder karta – bude nahrazena dynamickým obsahem v Kroku 2 -->
-<div class="bg-white rounded-2xl shadow p-8 flex flex-col items-center justify-center gap-3 text-slate-400">
-    <span class="text-4xl">❄</span>
-    <p class="text-base font-medium">Webové rozhraní je připraveno.</p>
-    <p class="text-sm">Připojení ke klimatizaci bude aktivováno v dalším kroku vývoje.</p>
-    <a href="/health"
-       class="mt-2 text-xs bg-slate-100 hover:bg-slate-200 transition-colors
-              rounded-lg px-4 py-2 font-mono text-slate-500">
-        GET /health
-    </a>
+    <!-- ═══════════════════════════════════════════════════════
+         STATUS BAR
+    ════════════════════════════════════════════════════════ -->
+    <div class="bg-gray-800 border border-gray-700 rounded-xl px-5 py-3 mb-5 flex items-center justify-between gap-3">
+
+        <!-- Levá část: LED + stav + mód badge -->
+        <div class="flex items-center gap-3 min-w-0">
+            <span class="w-3 h-3 rounded-full flex-shrink-0 transition-colors"
+                  :class="isPowerOn ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]' : 'bg-red-600'">
+            </span>
+            <span class="font-semibold text-sm flex-shrink-0"
+                  :class="isPowerOn ? 'text-green-400' : 'text-red-400'"
+                  x-text="isPowerOn ? 'Zapnuto' : 'Vypnuto'">
+            </span>
+            <span :class="controlMode==='AUTO'
+                        ? 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/40'
+                        : 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/40'"
+                  class="text-xs px-2.5 py-1 rounded-full font-semibold flex-shrink-0"
+                  x-text="controlMode === 'AUTO' ? '🤖 AUTO' : '🖐️ HAND'">
+            </span>
+            <!-- WS indikátor -->
+            <span class="flex items-center gap-1.5 text-xs flex-shrink-0"
+                  :class="wsConnected ? 'text-gray-500' : 'text-red-400'"
+                  :title="wsConnected ? 'WebSocket aktivní – stavové změny se promítají automaticky' : 'WebSocket odpojen – stav se neaktualizuje automaticky'">
+                <span class="w-2 h-2 rounded-full transition-colors"
+                      :class="wsConnected ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'"></span>
+                <span x-text="wsConnected ? 'Push' : 'Offline'"></span>
+            </span>
+        </div>
+
+        <!-- Střed: Power tlačítko -->
+        <button @click="togglePower()"
+                :disabled="loading || !!loadingDevices[deviceId]"
+                :class="{
+                    'bg-red-700 hover:bg-red-600':   isPowerOn && !loadingDevices[deviceId],
+                    'bg-green-700 hover:bg-green-600': !isPowerOn && !loadingDevices[deviceId],
+                    'opacity-50 cursor-wait': loading || loadingDevices[deviceId]
+                }"
+                class="flex items-center gap-2 px-7 py-2.5 rounded-full font-bold text-white
+                       text-sm transition-all shadow flex-shrink-0">
+            <span class="text-base">⏻</span>
+            <span x-text="loadingDevices[deviceId] ? 'Odesílám…' : (isPowerOn ? 'Vypnout' : 'Zapnout')"></span>
+        </button>
+
+        <!-- Pravá část: teploty -->
+        <div class="flex items-center gap-4 flex-shrink-0 text-sm">
+            <div class="text-right" x-show="currentTemp !== null">
+                <div class="text-xs text-gray-500 leading-tight">Vnitřní</div>
+                <div class="text-xl font-bold text-gray-200 tabular-nums" x-text="currentTemp + '°C'"></div>
+            </div>
+            <div class="text-gray-600 text-lg" x-show="currentTemp !== null && targetTemp !== null">→</div>
+            <div class="text-right" x-show="targetTemp !== null">
+                <div class="text-xs text-gray-500 leading-tight">Nastaveno</div>
+                <div class="text-xl font-bold text-blue-400 tabular-nums" x-text="targetTemp + '°C'"></div>
+            </div>
+            <div class="text-gray-600 text-sm" x-show="loading">Načítám…</div>
+        </div>
+    </div>
+
+    <!-- Chyba při načítání -->
+    <div x-show="!loading && error"
+         class="bg-red-950/50 border border-red-800 rounded-xl p-6 text-center mb-5">
+        <div class="text-3xl mb-2">⚠️</div>
+        <div class="text-red-400 font-medium" x-text="error"></div>
+        <button @click="loadDevices()" class="mt-3 text-sm text-red-500 underline">Zkusit znovu</button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         POČASÍ
+    ════════════════════════════════════════════════════════ -->
+    <div class="flex gap-4 mb-5">
+
+        <!-- Sidebar: filtry zobrazení -->
+        <div class="flex-shrink-0 w-36 bg-gray-800 border border-gray-700 rounded-xl p-4">
+            <div class="text-xs text-gray-500 uppercase tracking-wider mb-3">Zobrazit</div>
+            <label class="flex items-center gap-2.5 cursor-pointer mb-3 group">
+                <input type="checkbox" x-model="showTemp" class="w-4 h-4 accent-blue-500 rounded">
+                <span class="text-sm text-gray-300 group-hover:text-gray-100">🌡 Teplota</span>
+            </label>
+            <label class="flex items-center gap-2.5 cursor-pointer mb-3 group">
+                <input type="checkbox" x-model="showClouds" class="w-4 h-4 accent-blue-500 rounded">
+                <span class="text-sm text-gray-300 group-hover:text-gray-100">☁️ Oblačnost</span>
+            </label>
+            <label class="flex items-center gap-2.5 cursor-pointer mb-3 group">
+                <input type="checkbox" x-model="showPrecip" class="w-4 h-4 accent-blue-500 rounded">
+                <span class="text-sm text-gray-300 group-hover:text-gray-100">🌧 Srážky</span>
+            </label>
+            <label class="flex items-center gap-2.5 cursor-pointer mb-3 group">
+                <input type="checkbox" x-model="showWind" class="w-4 h-4 accent-blue-500 rounded">
+                <span class="text-sm text-gray-300 group-hover:text-gray-100">💨 Vítr</span>
+            </label>
+            <label class="flex items-center gap-2.5 cursor-pointer group">
+                <input type="checkbox" x-model="showHumidity" class="w-4 h-4 accent-blue-500 rounded">
+                <span class="text-sm text-gray-300 group-hover:text-gray-100">💧 Vlhkost</span>
+            </label>
+        </div>
+
+        <!-- Scrollovatelné kartičky počasí -->
+        <div class="flex-1 bg-gray-800 border border-gray-700 rounded-xl p-4 overflow-hidden min-w-0">
+            <div class="flex items-center justify-between mb-3">
+                <div class="min-w-0">
+                    <span class="text-sm font-medium text-gray-200">Předpověď počasí</span>
+                    <span class="text-xs text-gray-500 ml-2 truncate" x-text="weatherSubtitle"></span>
+                </div>
+                <button @click="loadForecast()" :disabled="loadingForecast"
+                        class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 ml-2 flex-shrink-0 transition-colors">
+                    🔄
+                </button>
+            </div>
+
+            <!-- Skeleton -->
+            <div x-show="loadingForecast" class="flex gap-2">
+                <template x-for="i in 10" :key="i">
+                    <div class="flex-shrink-0 w-16 h-28 bg-gray-700 rounded-lg animate-pulse"></div>
+                </template>
+            </div>
+
+            <!-- Chyba -->
+            <div x-show="!loadingForecast && forecastError"
+                 class="py-8 text-center text-sm text-red-400" x-text="forecastError"></div>
+
+            <!-- Kartičky -->
+            <div x-show="!loadingForecast && !forecastError && hourly.length"
+                 class="flex gap-2 overflow-x-auto pb-1"
+                 style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
+                <template x-for="(h, idx) in hourly" :key="h.time_utc || h.time_label">
+                    <div class="flex-shrink-0 w-[4.5rem] bg-gray-900/70 border border-gray-700/60 rounded-lg p-2 text-center">
+                        <!-- Datum – zobrazí se jen při přechodu na nový den -->
+                        <div x-show="idx > 0 && hourly[idx-1] && hourly[idx-1].date_label !== h.date_label"
+                             class="text-xs text-yellow-600/80 leading-tight -mt-0.5 mb-0.5"
+                             x-text="h.date_label"></div>
+                        <div class="text-xs text-gray-400 font-medium leading-tight"
+                             :class="(idx > 0 && hourly[idx-1] && hourly[idx-1].date_label !== h.date_label) ? '' : 'mb-1.5'"
+                             x-text="h.time_label"></div>
+                        <div x-show="showTemp"
+                             class="text-sm font-bold tabular-nums"
+                             :class="tempColor(h.temp_c)"
+                             x-text="h.temp_c + '°'"></div>
+                        <div x-show="showClouds && h.cloudiness_pct !== undefined"
+                             class="text-xs text-gray-400 mt-1 leading-tight"
+                             x-text="cloudIcon(h.cloudiness_pct)"></div>
+                        <div x-show="showClouds && h.cloudiness_pct !== undefined"
+                             class="text-xs text-gray-500 leading-tight"
+                             x-text="h.cloudiness_pct + '%'"></div>
+                        <div x-show="showPrecip && h.precip_mm_h > 0"
+                             class="text-xs text-blue-400 mt-1 leading-tight"
+                             x-text="'🌧 ' + h.precip_mm_h"></div>
+                        <div x-show="showWind && h.wind_ms !== undefined"
+                             class="text-xs text-cyan-400 mt-1 leading-tight"
+                             x-text="'💨 ' + h.wind_ms"></div>
+                        <div x-show="showHumidity && h.humidity_pct !== undefined"
+                             class="text-xs text-indigo-300 mt-1 leading-tight"
+                             x-text="'💧 ' + h.humidity_pct + '%'"></div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Bez dat -->
+            <div x-show="!loadingForecast && !forecastError && !hourly.length"
+                 class="py-8 text-center text-sm text-gray-600">
+                Předpověď není dostupná nebo není nakonfigurována.
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         3 SLOUPCE: MÓD | TEPLOTA | VENTILÁTOR
+    ════════════════════════════════════════════════════════ -->
+    <div class="grid grid-cols-3 gap-4 mb-5">
+
+        <!-- 1. Mód klimatizace -->
+        <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+            <div class="text-xs text-gray-500 uppercase tracking-wider mb-3">Mód klimatizace</div>
+            <div class="grid grid-cols-2 gap-2">
+                <template x-for="m in ['COOL','HEAT','AUTO','AIR_DRY','FAN']" :key="m">
+                    <button @click="sendCmd('change_mode', [m])"
+                            :disabled="!!loadingDevices[deviceId]"
+                            :class="mode === m
+                                ? 'bg-blue-600 text-white border-blue-500'
+                                : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'"
+                            class="py-2.5 px-2 rounded-lg text-xs font-medium border transition-all
+                                   flex items-center justify-center gap-1.5 disabled:opacity-40">
+                        <span x-text="modeEmoji(m)"></span>
+                        <span x-text="modeLabel(m)"></span>
+                    </button>
+                </template>
+            </div>
+        </div>
+
+        <!-- 2. Cílová teplota -->
+        <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+            <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Cílová teplota</div>
+            <div class="text-xs text-amber-400 mb-3 h-4"
+                 x-text="mode === 'FAN' ? '(větrák – teplota n/a)' : 'krok 0,5°C, rozsah 16–30°C'"></div>
+
+            <div class="flex flex-col items-center gap-3"
+                 :class="mode === 'FAN' ? 'opacity-30 pointer-events-none' : ''">
+                <button @click="adjustTemp(+0.5)"
+                        :disabled="!!loadingDevices[deviceId]"
+                        class="w-full py-2.5 bg-gray-700 hover:bg-gray-600 active:bg-gray-500
+                               rounded-lg text-xl font-bold text-gray-200 transition-colors disabled:opacity-40">
+                    +
+                </button>
+                <div class="text-4xl font-bold text-blue-400 tabular-nums select-none">
+                    <span x-text="targetTemp !== null ? targetTemp + '°C' : '—'"></span>
+                </div>
+                <button @click="adjustTemp(-0.5)"
+                        :disabled="!!loadingDevices[deviceId]"
+                        class="w-full py-2.5 bg-gray-700 hover:bg-gray-600 active:bg-gray-500
+                               rounded-lg text-xl font-bold text-gray-200 transition-colors disabled:opacity-40">
+                    −
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. Ventilátor -->
+        <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+            <div class="text-xs text-gray-500 uppercase tracking-wider mb-3">Intenzita ventilátoru</div>
+            <div class="grid grid-cols-2 gap-2">
+                <template x-for="ws in ['AUTO','LOW','MID','HIGH']" :key="ws">
+                    <button @click="sendCmd('set_wind_strength', [ws])"
+                            :disabled="!!loadingDevices[deviceId]"
+                            :class="windStrength === ws
+                                ? 'bg-blue-600 text-white border-blue-500'
+                                : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'"
+                            class="py-3 rounded-lg text-sm font-medium border transition-all
+                                   flex flex-col items-center gap-1 disabled:opacity-40">
+                        <span x-text="fanEmoji(ws)"></span>
+                        <span x-text="fanLabel(ws)"></span>
+                    </button>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         SOUHRN + LOPATKY
+    ════════════════════════════════════════════════════════ -->
+    <div class="grid grid-cols-2 gap-4 mb-6">
+
+        <!-- Souhrn nastavení -->
+        <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+            <div class="text-xs text-gray-500 uppercase tracking-wider mb-3">Souhrn nastavení</div>
+            <div class="space-y-2 text-sm">
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Stav</span>
+                    <span :class="isPowerOn ? 'text-green-400' : 'text-red-400'"
+                          class="font-semibold"
+                          x-text="isPowerOn ? 'Zapnuto' : 'Vypnuto'"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Mód</span>
+                    <span class="text-gray-200 font-medium"
+                          x-text="modeEmoji(mode) + ' ' + modeLabel(mode)"></span>
+                </div>
+                <div class="flex justify-between" x-show="mode !== 'FAN'">
+                    <span class="text-gray-400">Nastaveno</span>
+                    <span class="text-blue-400 font-bold"
+                          x-text="targetTemp !== null ? targetTemp + '°C' : '—'"></span>
+                </div>
+                <div class="flex justify-between" x-show="currentTemp !== null">
+                    <span class="text-gray-400">Snímač</span>
+                    <span class="text-gray-200" x-text="currentTemp + '°C'"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Ventilátor</span>
+                    <span class="text-gray-200" x-text="fanEmoji(windStrength) + ' ' + fanLabel(windStrength)"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Lopatky ↕</span>
+                    <span :class="rotateUpDown ? 'text-green-400' : 'text-gray-500'"
+                          x-text="rotateUpDown ? 'Auto-kývání' : 'Pevná poloha'"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Lopatky ↔</span>
+                    <span :class="rotateLeftRight ? 'text-green-400' : 'text-gray-500'"
+                          x-text="rotateLeftRight ? 'Auto-kývání' : 'Pevná poloha'"></span>
+                </div>
+                <div class="flex justify-between border-t border-gray-700 pt-2 mt-1">
+                    <span class="text-gray-400">Řízení</span>
+                    <span :class="controlMode==='AUTO' ? 'text-emerald-400' : 'text-amber-400'"
+                          class="font-semibold" x-text="controlMode"></span>
+                </div>
+                <div class="flex justify-between" x-show="lastUpdate">
+                    <span class="text-gray-500 text-xs">Aktualizováno</span>
+                    <span class="text-gray-600 text-xs tabular-nums" x-text="lastUpdateText"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Proudění vzduchu – lopatky -->
+        <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+            <div class="text-xs text-gray-500 uppercase tracking-wider mb-4">Proudění vzduchu – lopatky</div>
+
+            <!-- Vertikální lopatky -->
+            <div class="mb-5">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-sm font-medium text-gray-200">↕ Vertikální</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Kývání nahoru / dolů</div>
+                    </div>
+                    <!-- Toggle switch -->
+                    <button @click="toggleRotate('updown')"
+                            :disabled="!!loadingDevices[deviceId]"
+                            :class="rotateUpDown ? 'bg-blue-600' : 'bg-gray-600'"
+                            class="relative w-12 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-40">
+                        <span :class="rotateUpDown ? 'translate-x-6' : 'translate-x-1'"
+                              class="absolute top-1 left-0 w-4 h-4 bg-white rounded-full shadow
+                                     transition-transform duration-200 pointer-events-none">
+                        </span>
+                    </button>
+                </div>
+                <div class="mt-2 text-right text-xs"
+                     :class="rotateUpDown ? 'text-blue-400' : 'text-gray-500'"
+                     x-text="rotateUpDown ? 'Automatické kývání zapnuto' : 'Pevná poloha'">
+                </div>
+            </div>
+
+            <!-- Horizontální lopatky -->
+            <div>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-sm font-medium text-gray-200">↔ Horizontální</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Kývání vlevo / vpravo</div>
+                    </div>
+                    <button @click="toggleRotate('leftright')"
+                            :disabled="!!loadingDevices[deviceId]"
+                            :class="rotateLeftRight ? 'bg-blue-600' : 'bg-gray-600'"
+                            class="relative w-12 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-40">
+                        <span :class="rotateLeftRight ? 'translate-x-6' : 'translate-x-1'"
+                              class="absolute top-1 left-0 w-4 h-4 bg-white rounded-full shadow
+                                     transition-transform duration-200 pointer-events-none">
+                        </span>
+                    </button>
+                </div>
+                <div class="mt-2 text-right text-xs"
+                     :class="rotateLeftRight ? 'text-blue-400' : 'text-gray-500'"
+                     x-text="rotateLeftRight ? 'Automatické kývání zapnuto' : 'Pevná poloha'">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         VELKÉ AUTO/HAND PŘEPÍNACÍ TLAČÍTKO
+    ════════════════════════════════════════════════════════ -->
+    <div class="flex justify-center mb-6">
+        <button @click="toggleMode()"
+                :class="controlMode === 'AUTO'
+                    ? 'bg-emerald-700 hover:bg-emerald-600 ring-2 ring-emerald-600/30'
+                    : 'bg-amber-700 hover:bg-amber-600 ring-2 ring-amber-600/30'"
+                class="flex items-center gap-3 px-12 py-4 rounded-full text-white font-bold
+                       text-lg shadow-xl transition-all active:scale-95">
+            <span class="text-2xl" x-text="controlMode === 'AUTO' ? '🤖' : '🖐️'"></span>
+            <span x-text="controlMode === 'AUTO'
+                ? 'Přepnout na HAND mód'
+                : 'Přepnout na AUTO mód'">
+            </span>
+        </button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
+         SPODNÍ PANEL: AUTO nastavení / HAND plány
+    ════════════════════════════════════════════════════════ -->
+    <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+
+        <!-- Subtab lišta -->
+        <div class="flex border-b border-gray-700">
+            <button @click="bottomTab = 'auto'"
+                    :class="bottomTab === 'auto'
+                        ? 'bg-gray-800 text-white border-b-2 border-blue-500'
+                        : 'bg-gray-900/60 text-gray-400 hover:text-gray-200'"
+                    class="flex-1 py-3.5 text-sm font-semibold transition-colors flex items-center justify-center gap-2">
+                🤖 AUTO nastavení
+            </button>
+            <button @click="bottomTab = 'hand'; loadScheduleOnce()"
+                    :class="bottomTab === 'hand'
+                        ? 'bg-gray-800 text-white border-b-2 border-blue-500'
+                        : 'bg-gray-900/60 text-gray-400 hover:text-gray-200'"
+                    class="flex-1 py-3.5 text-sm font-semibold transition-colors flex items-center justify-center gap-2">
+                🖐️ HAND plány
+            </button>
+        </div>
+
+        <!-- AUTO obsah -->
+        <div x-show="bottomTab === 'auto'" class="p-5">
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-4">
+                    <div class="text-sm font-semibold text-gray-200 mb-4">🌡 Teplotní pravidla</div>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-400">Spustit topení pokud ΔT ≥</span>
+                            <span class="text-blue-400 font-bold">10°C</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-400">Vypnout topení pokud ΔT ≤</span>
+                            <span class="text-blue-400 font-bold">5°C</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-400">Spustit větrák pokud T ≥</span>
+                            <span class="text-red-400 font-bold">25°C</span>
+                        </div>
+                        <div class="text-xs text-gray-600 pt-2 border-t border-gray-700">
+                            Editace pravidel bude dostupná v příští verzi.
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-4">
+                    <div class="text-sm font-semibold text-gray-200 mb-4">📡 Konfigurace zdrojů</div>
+                    <div class="space-y-2.5 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Poskytovatel</span>
+                            <span class="text-gray-200" x-text="weatherConfig.provider || '–'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Lokalita</span>
+                            <span class="text-gray-200" x-text="weatherConfig.chmi_location_label || '–'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Horizont</span>
+                            <span class="text-gray-200"
+                                  x-text="(weatherConfig.horizon_hours || 24) + ' hod'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Korekce čidla</span>
+                            <span class="text-gray-200"
+                                  x-text="(weatherConfig.sensor_offset_c >= 0 ? '+' : '') + (weatherConfig.sensor_offset_c ?? 0) + '°C'">
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HAND obsah (plány) -->
+        <div x-show="bottomTab === 'hand'" class="p-5">
+
+            <!-- Header -->
+            <div class="flex items-center justify-between mb-4">
+                <div class="text-sm font-semibold text-gray-200">Naplánované akce</div>
+                <button @click="openNewSchedule()" x-show="!scheduleForm"
+                        class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500
+                               rounded-lg text-xs font-semibold text-white transition-colors">
+                    ＋ Přidat plán
+                </button>
+            </div>
+
+            <!-- Loading -->
+            <div x-show="loadingSchedule"
+                 class="h-20 bg-gray-700/50 rounded-xl animate-pulse mb-4"></div>
+
+            <!-- Error -->
+            <div x-show="!loadingSchedule && scheduleError"
+                 class="py-4 text-center text-red-400 text-sm mb-4"
+                 x-text="scheduleError"></div>
+
+            <!-- Tabulka -->
+            <div x-show="!loadingSchedule && !scheduleError" class="mb-4">
+
+                <!-- Prázdný stav -->
+                <div x-show="!schedules.length && !scheduleForm" class="py-8 text-center">
+                    <div class="text-4xl mb-2">🗓️</div>
+                    <div class="text-gray-400 text-sm mb-1">Žádné naplánované akce</div>
+                    <div class="text-gray-600 text-xs">Kliknutím na „＋ Přidat plán" vytvoříš nový.</div>
+                </div>
+
+                <div x-show="schedules.length > 0"
+                     class="overflow-x-auto rounded-lg border border-gray-700/50">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-900/60">
+                            <tr class="text-left text-xs text-gray-500 uppercase tracking-wide">
+                                <th class="py-2.5 px-3">Název</th>
+                                <th class="py-2.5 px-3">Čas</th>
+                                <th class="py-2.5 px-3">Dny</th>
+                                <th class="py-2.5 px-3">Nastavení</th>
+                                <th class="py-2.5 px-3 text-center">Aktivní</th>
+                                <th class="py-2.5 px-3"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-700/40">
+                            <template x-for="s in schedules" :key="s.id">
+                                <tr class="hover:bg-gray-700/20 transition-colors"
+                                    :class="!s.enabled ? 'opacity-50' : ''">
+                                    <td class="py-2.5 px-3 text-gray-200 font-medium"
+                                        x-text="s.name || '–'"></td>
+                                    <td class="py-2.5 px-3 text-gray-400 font-mono text-xs"
+                                        x-text="schedFormatTime(s)"></td>
+                                    <td class="py-2.5 px-3 text-gray-400 text-xs"
+                                        x-text="formatDays(s.days)"></td>
+                                    <td class="py-2.5 px-3 text-gray-400 text-xs"
+                                        x-text="schedFormatAction(s)"></td>
+                                    <td class="py-2.5 px-3 text-center">
+                                        <button @click="toggleScheduleEntry(s.id)"
+                                                :class="s.enabled ? 'bg-blue-600' : 'bg-gray-600'"
+                                                class="relative w-9 h-5 rounded-full transition-colors">
+                                            <span :class="s.enabled ? 'translate-x-4' : 'translate-x-1'"
+                                                  class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full
+                                                         shadow transition-transform duration-200 pointer-events-none">
+                                            </span>
+                                        </button>
+                                    </td>
+                                    <td class="py-2.5 px-3 text-right whitespace-nowrap">
+                                        <button @click="openEditSchedule(s)" title="Upravit"
+                                                class="text-gray-400 hover:text-blue-400 mr-2 transition-colors">✏️</button>
+                                        <button @click="deleteScheduleEntry(s.id)" title="Smazat"
+                                                class="text-gray-400 hover:text-red-400 transition-colors">🗑️</button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ── Inline formulář (nový / edit) ────────────────────── -->
+            <div x-show="scheduleForm !== null"
+                 class="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                <div class="text-sm font-semibold text-gray-200 mb-4"
+                     x-text="scheduleForm?.id ? '✏️ Upravit plán' : '➕ Nový plán'"></div>
+
+                <div class="grid grid-cols-2 gap-5">
+
+                    <!-- Levý sloupec: název, časy, dny -->
+                    <div class="space-y-3">
+
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1">Název</label>
+                            <input type="text" x-model="scheduleForm.name"
+                                   placeholder="např. Ranní chlazení"
+                                   class="w-full bg-gray-800 border border-gray-600 rounded-lg
+                                          px-3 py-2 text-sm text-gray-100
+                                          focus:outline-none focus:border-blue-500">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="text-xs text-gray-400 block mb-1">Čas zapnutí</label>
+                                <input type="time" x-model="scheduleForm.time_on"
+                                       class="w-full bg-gray-800 border border-gray-600 rounded-lg
+                                              px-3 py-2 text-sm text-gray-100
+                                              focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400 block mb-1">
+                                    Čas vypnutí
+                                    <span class="text-gray-600">(volitelné)</span>
+                                </label>
+                                <input type="time" x-model="scheduleForm.time_off"
+                                       class="w-full bg-gray-800 border border-gray-600 rounded-lg
+                                              px-3 py-2 text-sm text-gray-100
+                                              focus:outline-none focus:border-blue-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1.5">Dny opakování</label>
+                            <!-- Rychlé předvolby -->
+                            <div class="flex gap-1.5 mb-2">
+                                <button type="button" @click="scheduleForm.days = []"
+                                        :class="scheduleForm.days.length === 0
+                                            ? 'bg-blue-600 text-white'
+                                            : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                        class="px-2 py-1 rounded text-xs transition-colors">
+                                    Každý den
+                                </button>
+                                <button type="button"
+                                        @click="scheduleForm.days = ['mon','tue','wed','thu','fri']"
+                                        :class="schedDaysMatch(['mon','tue','wed','thu','fri'])
+                                            ? 'bg-blue-600 text-white'
+                                            : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                        class="px-2 py-1 rounded text-xs transition-colors">
+                                    Po–Pá
+                                </button>
+                                <button type="button"
+                                        @click="scheduleForm.days = ['sat','sun']"
+                                        :class="schedDaysMatch(['sat','sun'])
+                                            ? 'bg-blue-600 text-white'
+                                            : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                        class="px-2 py-1 rounded text-xs transition-colors">
+                                    So–Ne
+                                </button>
+                            </div>
+                            <!-- Individuální dny -->
+                            <div class="flex gap-1">
+                                <template x-for="d in [{v:'mon',l:'Po'},{v:'tue',l:'Út'},{v:'wed',l:'St'},{v:'thu',l:'Čt'},{v:'fri',l:'Pá'},{v:'sat',l:'So'},{v:'sun',l:'Ne'}]" :key="d.v">
+                                    <button type="button" @click="toggleFormDay(d.v)"
+                                            :class="scheduleForm.days.includes(d.v)
+                                                ? 'bg-blue-600 text-white'
+                                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                            class="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
+                                            x-text="d.l"></button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Aktivní -->
+                        <div class="flex items-center gap-3 pt-1">
+                            <span class="text-xs text-gray-400">Stav:</span>
+                            <button type="button"
+                                    @click="scheduleForm.enabled = !scheduleForm.enabled"
+                                    :class="scheduleForm.enabled ? 'bg-blue-600' : 'bg-gray-600'"
+                                    class="relative w-10 h-5 rounded-full transition-colors">
+                                <span :class="scheduleForm.enabled ? 'translate-x-5' : 'translate-x-1'"
+                                      class="absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full
+                                             shadow transition-transform duration-200 pointer-events-none">
+                                </span>
+                            </button>
+                            <span class="text-xs"
+                                  :class="scheduleForm.enabled ? 'text-green-400' : 'text-gray-500'"
+                                  x-text="scheduleForm.enabled ? 'Aktivní' : 'Neaktivní'"></span>
+                        </div>
+                    </div>
+
+                    <!-- Pravý sloupec: akce (mód, teplota, ventilátor) -->
+                    <div class="space-y-3">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">Nastavení při zapnutí</div>
+
+                        <!-- Mód -->
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1.5">
+                                Mód
+                                <span class="text-gray-600 normal-case">(— = neměnit)</span>
+                            </label>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" @click="scheduleForm.action.mode = null"
+                                        :class="scheduleForm.action.mode === null
+                                            ? 'bg-gray-500 text-white ring-1 ring-gray-400'
+                                            : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                        class="px-2.5 py-1 rounded text-xs transition-colors">—</button>
+                                <template x-for="m in ['COOL','HEAT','AUTO','AIR_DRY','FAN']" :key="m">
+                                    <button type="button" @click="scheduleForm.action.mode = m"
+                                            :class="scheduleForm.action.mode === m
+                                                ? 'bg-blue-600 text-white'
+                                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                            class="px-2.5 py-1 rounded text-xs transition-colors"
+                                            x-text="modeEmoji(m) + ' ' + modeLabel(m)"></button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Teplota -->
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1.5">
+                                Teplota
+                                <span class="text-gray-600 normal-case">(— = neměnit)</span>
+                            </label>
+                            <div class="flex items-center gap-2">
+                                <button type="button" @click="scheduleForm.action.temperature = null"
+                                        :class="scheduleForm.action.temperature === null
+                                            ? 'bg-gray-500 text-white ring-1 ring-gray-400'
+                                            : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                        class="px-2.5 py-1.5 rounded text-xs transition-colors flex-shrink-0">—</button>
+                                <button type="button"
+                                        @click="schedFormAdjustTemp(-0.5)"
+                                        :disabled="scheduleForm.action.temperature === null || scheduleForm.action.temperature <= 16"
+                                        class="w-7 h-7 bg-gray-700 hover:bg-gray-600 rounded text-sm font-bold
+                                               text-gray-200 disabled:opacity-30 flex-shrink-0 transition-colors">−</button>
+                                <span class="text-sm font-bold tabular-nums text-blue-400 w-16 text-center"
+                                      x-text="scheduleForm.action.temperature !== null
+                                          ? scheduleForm.action.temperature + '°C' : '–'"></span>
+                                <button type="button"
+                                        @click="schedFormAdjustTemp(+0.5)"
+                                        :disabled="scheduleForm.action.temperature === null || scheduleForm.action.temperature >= 30"
+                                        class="w-7 h-7 bg-gray-700 hover:bg-gray-600 rounded text-sm font-bold
+                                               text-gray-200 disabled:opacity-30 flex-shrink-0 transition-colors">+</button>
+                                <button type="button"
+                                        x-show="scheduleForm.action.temperature === null"
+                                        @click="scheduleForm.action.temperature = 22"
+                                        class="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0 transition-colors">
+                                    Nastavit
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Ventilátor -->
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1.5">
+                                Ventilátor
+                                <span class="text-gray-600 normal-case">(— = neměnit)</span>
+                            </label>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" @click="scheduleForm.action.wind_strength = null"
+                                        :class="scheduleForm.action.wind_strength === null
+                                            ? 'bg-gray-500 text-white ring-1 ring-gray-400'
+                                            : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                        class="px-2.5 py-1 rounded text-xs transition-colors">—</button>
+                                <template x-for="ws in ['AUTO','LOW','MID','HIGH']" :key="ws">
+                                    <button type="button"
+                                            @click="scheduleForm.action.wind_strength = ws"
+                                            :class="scheduleForm.action.wind_strength === ws
+                                                ? 'bg-blue-600 text-white'
+                                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'"
+                                            class="px-2.5 py-1 rounded text-xs transition-colors"
+                                            x-text="fanEmoji(ws) + ' ' + fanLabel(ws)"></button>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chyba formuláře -->
+                <div x-show="scheduleFormError"
+                     class="mt-3 text-xs text-red-400 bg-red-950/30 border border-red-800/40 rounded-lg px-3 py-2"
+                     x-text="scheduleFormError"></div>
+
+                <!-- Tlačítka formuláře -->
+                <div class="flex gap-2 mt-4">
+                    <button @click="saveScheduleEntry()" :disabled="scheduleFormLoading"
+                            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm
+                                   font-semibold text-white transition-colors disabled:opacity-50"
+                            x-text="scheduleFormLoading ? 'Ukládám…' : 'Uložit'"></button>
+                    <button @click="cancelScheduleForm()"
+                            class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm
+                                   text-gray-300 transition-colors">Zrušit</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('dashboard', () => ({
+
+        // ── Stav zařízení ─────────────────────────────────────────────
+        loading:         true,
+        error:           null,
+        lastUpdate:      null,
+        devices:         [],
+        status:          {},
+        loadingDevices:  {},
+        ws:              null,
+        wsConnected:     false,
+
+        // ── Řízení ────────────────────────────────────────────────────
+        controlMode: 'AUTO',
+
+        // ── Počasí ────────────────────────────────────────────────────
+        showTemp:       true,
+        showClouds:     true,
+        showPrecip:     true,
+        showWind:       false,
+        showHumidity:   false,
+        hourly:         [],
+        weatherConfig:  {},
+        loadingForecast: false,
+        forecastError:  null,
+
+        // ── Spodní panel ──────────────────────────────────────────────
+        bottomTab: 'auto',
+
+        // ── Teplota – optimistická aktualizace ─────────────────────────
+        _tempOverride:  null,
+
+        // ── Plány (HAND subtab) ───────────────────────────────────────
+        schedules:          [],
+        schedSettings:      {},
+        loadingSchedule:    false,
+        scheduleError:      null,
+        _scheduleLoaded:    false,
+
+        // Formulář pro nový/edit plán
+        scheduleForm:       null,
+        scheduleFormError:  null,
+        scheduleFormLoading: false,
+
+        // ── Computed gettery ──────────────────────────────────────────
+        get device()         { return this.devices[0] || null; },
+        get deviceId()       { return this.device?.device_id || null; },
+        get deviceStatus()   { return (this.deviceId ? this.status[this.deviceId] : null) || {}; },
+        get isPowerOn()      { return this.deviceStatus?.operation?.airConOperationMode === 'POWER_ON'; },
+        get mode()           { return this.deviceStatus?.airConJobMode?.currentJobMode || ''; },
+        get targetTemp()     { if (this._tempOverride !== null) return this._tempOverride; const t = this.deviceStatus?.temperature?.targetTemperature; return t ?? null; },
+        get currentTemp()    { const t = this.deviceStatus?.temperature?.currentTemperature;  return t ?? null; },
+        get windStrength()   { return this.deviceStatus?.airFlow?.windStrength || 'AUTO'; },
+        get rotateUpDown()   { return Boolean(this.deviceStatus?.windDirection?.rotateUpDown); },
+        get rotateLeftRight(){ return Boolean(this.deviceStatus?.windDirection?.rotateLeftRight); },
+
+        get lastUpdateText() {
+            return this.lastUpdate
+                ? new Intl.DateTimeFormat('cs', { hour:'2-digit', minute:'2-digit', second:'2-digit' }).format(this.lastUpdate)
+                : '';
+        },
+        get weatherSubtitle() {
+            if (this.loadingForecast) return '– načítám…';
+            if (this.forecastError)   return '– chyba';
+            const loc = this.weatherConfig?.chmi_location_label;
+            const h   = this.weatherConfig?.horizon_hours || 24;
+            return loc ? `– ${loc}, ${h} hod` : '';
+        },
+
+        // ── Lifecycle ─────────────────────────────────────────────────
+        async init() {
+            await Promise.all([this.loadMode(), this.loadDevices()]);
+            this.connectWS();
+            this.loadWeatherConfig();
+            this.loadForecast();
+        },
+
+        // ── Načítání dat ──────────────────────────────────────────────
+        async loadMode() {
+            try {
+                const r = await fetch('/api/mode/');
+                if (r.ok) this.controlMode = (await r.json()).mode;
+            } catch (_) {}
+        },
+
+        async loadDevices() {
+            this.loading = true; this.error = null;
+            try {
+                const r = await fetch('/api/devices/');
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                this.devices = await r.json();
+                if (this.devices[0]) await this.refreshStatus(this.devices[0].device_id);
+            } catch (e) {
+                this.error = e.message;
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        async refreshStatus(id) {
+            try {
+                const r = await fetch(`/api/devices/${id}/status`);
+                if (r.ok) {
+                    this.status      = { ...this.status, [id]: await r.json() };
+                    this.lastUpdate  = new Date();
+                }
+            } catch (_) {}
+        },
+
+        async loadWeatherConfig() {
+            try {
+                const r = await fetch('/api/weather/config');
+                if (r.ok) this.weatherConfig = await r.json();
+            } catch (_) {}
+        },
+
+        async loadForecast() {
+            this.loadingForecast = true; this.forecastError = null;
+            try {
+                const r = await fetch('/api/weather/forecast');
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const d = await r.json();
+                if (d.error) { this.forecastError = d.error; }
+                else {
+                    this.hourly        = d.hourly || [];
+                    this.weatherConfig = { ...this.weatherConfig, ...d };
+                }
+            } catch (e) {
+                this.forecastError = `Chyba: ${e.message}`;
+            } finally {
+                this.loadingForecast = false;
+            }
+        },
+
+        loadScheduleOnce() {
+            if (!this._scheduleLoaded) { this._scheduleLoaded = true; this.loadSchedule(); }
+        },
+
+        async loadSchedule() {
+            this.loadingSchedule = true; this.scheduleError = null;
+            try {
+                const r = await fetch('/api/schedule/');
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const d        = await r.json();
+                this.schedules = d.schedules || [];
+                this.schedSettings = d.settings  || {};
+            } catch (e) {
+                this.scheduleError = `Chyba: ${e.message}`;
+            } finally {
+                this.loadingSchedule = false;
+            }
+        },
+
+        // ── WebSocket ─────────────────────────────────────────────────
+        connectWS() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws    = new WebSocket(`${proto}//${location.host}/ws`);
+            this.ws     = ws;
+            const self  = this;
+
+            ws.onopen    = () => { self.wsConnected = true; };
+            ws.onclose   = () => { self.wsConnected = false; setTimeout(() => self.connectWS(), 4000); };
+            ws.onerror   = () => ws.close();
+            ws.onmessage = async ev => {
+                try {
+                    const msg = JSON.parse(ev.data);
+                    if (msg.type === 'device_status') {
+                        const id = msg.device_id || self.devices[0]?.device_id;
+                        if (id) await self.refreshStatus(id);
+                    } else if (msg.type === 'mode_change') {
+                        self.controlMode = msg.data.mode;
+                    }
+                } catch (_) {}
+            };
+            const pid = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+                else clearInterval(pid);
+            }, 30000);
+        },
+
+        // ── Akce ──────────────────────────────────────────────────────
+        async sendCmd(command, args = []) {
+            if (!this.deviceId) return;
+            this.loadingDevices = { ...this.loadingDevices, [this.deviceId]: true };
+            try {
+                const r = await fetch(`/api/devices/${this.deviceId}/command`, {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ command, args })
+                });
+                if (r.ok) {
+                    await new Promise(res => setTimeout(res, 1200));
+                    await this.refreshStatus(this.deviceId);
+                }
+            } finally {
+                this.loadingDevices = { ...this.loadingDevices, [this.deviceId]: false };
+            }
+        },
+
+        togglePower()  { this.sendCmd(this.isPowerOn ? 'power_off' : 'power_on'); },
+        async adjustTemp(delta) {
+            // Použij _tempOverride jako základ pokud je nastaven (umožňuje opakované kliknutí)
+            const base = this._tempOverride !== null ? this._tempOverride : this.targetTemp;
+            if (base === null) return;
+            // Zaokrouhlení na 0,5 stupně a kontrola rozsahu 16–30 °C
+            const next = Math.round((base + delta) * 2) / 2;
+            if (next < 16 || next > 30) return;
+            this._tempOverride = next;          // okamžitá vizuální aktualizace
+            try {
+                await this.sendCmd('set_temperature', [next]);
+            } finally {
+                this._tempOverride = null;      // po potvrzení zobraz reálnou hodnotu
+            }
+        },
+
+        toggleRotate(axis) {
+            const ud = axis === 'updown'    ? !this.rotateUpDown    : this.rotateUpDown;
+            const lr = axis === 'leftright' ? !this.rotateLeftRight : this.rotateLeftRight;
+            this.sendCmd('set_wind_direction', [ud, lr]);
+        },
+
+        async toggleMode() {
+            const newMode = this.controlMode === 'AUTO' ? 'HAND' : 'AUTO';
+            const r = await fetch('/api/mode/', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ mode: newMode })
+            });
+            if (r.ok) this.controlMode = newMode;
+        },
+
+        // ── Label / emoji helpers ─────────────────────────────────────
+        modeEmoji(m) {
+            return { COOL:'❄️', HEAT:'🌡️', FAN:'💨', AUTO:'🔄', AIR_DRY:'💧' }[m] || '?';
+        },
+        modeLabel(m) {
+            return { COOL:'Chlazení', HEAT:'Topení', FAN:'Větrák', AUTO:'Auto', AIR_DRY:'Odvlhč.' }[m] || m || '–';
+        },
+        fanEmoji(s) {
+            return { AUTO:'🔁', LOW:'🌬️', MID:'💨', HIGH:'🌪️' }[s] || s;
+        },
+        fanLabel(s) {
+            return { AUTO:'Auto', LOW:'Slabý', MID:'Střední', HIGH:'Silný' }[s] || s;
+        },
+        tempColor(t) {
+            if (t <= 0)  return 'text-blue-200';
+            if (t <= 10) return 'text-cyan-400';
+            if (t <= 18) return 'text-green-400';
+            if (t <= 26) return 'text-yellow-300';
+            if (t <= 32) return 'text-orange-400';
+            return 'text-red-400';
+        },
+        cloudIcon(pct) {
+            if (pct < 20) return '☀️';
+            if (pct < 45) return '🌤️';
+            if (pct < 70) return '⛅';
+            if (pct < 90) return '🌥️';
+            return '☁️';
+        },
+        formatDays(days) {
+            if (!Array.isArray(days) || !days.length) return 'Každý den';
+            const n = { mon:'Po', tue:'Út', wed:'St', thu:'Čt', fri:'Pá', sat:'So', sun:'Ne' };
+            return days.map(d => n[d] || d).join(', ');
+        },
+
+        // ── Plánování: helpers zobrazení ──────────────────────────────
+        schedFormatTime(s) {
+            if (!s.time_on) return '–';
+            return s.time_off ? `${s.time_on} – ${s.time_off}` : s.time_on;
+        },
+        schedFormatAction(s) {
+            const a = s.action || {};
+            const parts = [];
+            if (a.mode)          parts.push(this.modeEmoji(a.mode) + ' ' + this.modeLabel(a.mode));
+            if (a.temperature)   parts.push(a.temperature + '°C');
+            if (a.wind_strength) parts.push(this.fanLabel(a.wind_strength));
+            return parts.length ? parts.join(', ') : '–';
+        },
+
+        // ── Plánování: formulář ───────────────────────────────────────
+        _scheduleFormBlank() {
+            return {
+                id: null, name: '', enabled: true,
+                days: [], time_on: '08:00', time_off: '',
+                action: { mode: null, temperature: null, wind_strength: null },
+            };
+        },
+        openNewSchedule() {
+            this.scheduleFormError = null;
+            this.scheduleForm = this._scheduleFormBlank();
+        },
+        openEditSchedule(s) {
+            this.scheduleFormError = null;
+            this.scheduleForm = {
+                ...JSON.parse(JSON.stringify(s)),
+                time_off: s.time_off || '',
+                action: { mode: null, temperature: null, wind_strength: null, ...(s.action || {}) },
+            };
+        },
+        cancelScheduleForm() { this.scheduleForm = null; this.scheduleFormError = null; },
+
+        toggleFormDay(day) {
+            const ORDER = ['mon','tue','wed','thu','fri','sat','sun'];
+            if (this.scheduleForm.days.includes(day)) {
+                this.scheduleForm.days = this.scheduleForm.days.filter(d => d !== day);
+            } else {
+                this.scheduleForm.days = [...this.scheduleForm.days, day]
+                    .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+            }
+        },
+        schedDaysMatch(preset) {
+            const a = [...preset].sort();
+            const b = [...(this.scheduleForm?.days || [])].sort();
+            return JSON.stringify(a) === JSON.stringify(b);
+        },
+        schedFormAdjustTemp(delta) {
+            const cur = this.scheduleForm.action.temperature;
+            if (cur === null) return;
+            const next = Math.round((cur + delta) * 2) / 2;
+            if (next >= 16 && next <= 30) this.scheduleForm.action.temperature = next;
+        },
+
+        async saveScheduleEntry() {
+            this.scheduleFormError = null;
+            if (!this.scheduleForm.time_on) {
+                this.scheduleFormError = 'Čas zapnutí je povinný.';
+                return;
+            }
+            this.scheduleFormLoading = true;
+            try {
+                const isEdit = !!this.scheduleForm.id;
+                const url = isEdit
+                    ? `/api/schedule/entries/${this.scheduleForm.id}`
+                    : '/api/schedule/entries';
+                const payload = { ...this.scheduleForm };
+                if (!payload.time_off) payload.time_off = null;
+                const r = await fetch(url, {
+                    method:  isEdit ? 'PUT' : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify(payload),
+                });
+                if (!r.ok) {
+                    const err = await r.json().catch(() => ({ detail: r.statusText }));
+                    this.scheduleFormError = err.detail || 'Chyba při ukládání.';
+                    return;
+                }
+                this.scheduleForm = null;
+                await this.loadSchedule();
+            } catch (e) {
+                this.scheduleFormError = `Chyba: ${e.message}`;
+            } finally {
+                this.scheduleFormLoading = false;
+            }
+        },
+
+        async deleteScheduleEntry(id) {
+            if (!confirm('Smazat tento plán?')) return;
+            try {
+                const r = await fetch(`/api/schedule/entries/${id}`, { method: 'DELETE' });
+                if (r.ok) await this.loadSchedule();
+            } catch (_) {}
+        },
+
+        async toggleScheduleEntry(id) {
+            try {
+                const r = await fetch(`/api/schedule/entries/${id}/toggle`, { method: 'PATCH' });
+                if (r.ok) {
+                    const updated = await r.json();
+                    this.schedules = this.schedules.map(s => s.id === id ? updated : s);
+                }
+            } catch (_) {}
+        },
+    }));
+});
+</script>
 {% endblock %}

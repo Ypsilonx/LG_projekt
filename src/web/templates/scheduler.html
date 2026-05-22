@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Plánování – LG Klimatizace{% endblock %}
+
+{% block content %}
+<div x-data="schedulerPage" x-init="init()">
+
+    <!-- ── Nadpis + stav ── -->
+    <div class="flex items-start justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-800">Plánování</h1>
+            <p class="text-slate-500 text-sm mt-1">Přehled naplánovaných akcí klimatizace</p>
+        </div>
+        <span :class="settings.enable_scheduler
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-slate-100 text-slate-500'"
+              class="text-sm px-3 py-1.5 rounded-full font-semibold"
+              x-text="settings.enable_scheduler ? '✅ Plánovač aktivní' : '⏸ Plánovač vypnut'">
+        </span>
+    </div>
+
+    <!-- ── Načítám ── -->
+    <div x-show="loading"
+         class="bg-white rounded-xl border border-slate-200 h-40 animate-pulse mb-6"></div>
+
+    <!-- ── Chyba ── -->
+    <div x-show="!loading && error"
+         class="bg-red-50 border border-red-200 rounded-xl p-6 text-center mb-6">
+        <div class="text-3xl mb-2">⚠️</div>
+        <div class="text-red-700 text-sm" x-text="error"></div>
+    </div>
+
+    <!-- ── Obsah ── -->
+    <div x-show="!loading && !error">
+
+        <!-- Prázdný stav -->
+        <div x-show="schedules.length === 0"
+             class="bg-white rounded-xl border border-slate-200 p-14 text-center mb-6">
+            <div class="text-4xl mb-3">🗓️</div>
+            <div class="font-semibold text-slate-700 mb-1">Žádné naplánované akce</div>
+            <div class="text-slate-400 text-sm max-w-sm mx-auto leading-relaxed">
+                Plánovač je připraven. V budoucí verzi zde bude možné přidávat
+                časové plány pro automatické zapínání, vypínání nebo změnu
+                nastavení klimatizace.
+            </div>
+        </div>
+
+        <!-- Tabulka plánů -->
+        <div x-show="schedules.length > 0"
+             class="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6">
+            <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-left text-xs uppercase text-slate-500 tracking-wide">
+                    <tr>
+                        <th class="px-4 py-3">Název</th>
+                        <th class="px-4 py-3">Čas</th>
+                        <th class="px-4 py-3">Dny</th>
+                        <th class="px-4 py-3">Akce</th>
+                        <th class="px-4 py-3 text-right">Stav</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    <template x-for="(sched, idx) in schedules" :key="idx">
+                        <tr class="hover:bg-slate-50 transition-colors">
+                            <td class="px-4 py-3 font-medium text-slate-800"
+                                x-text="sched.name || ('Plán #' + (idx + 1))"></td>
+                            <td class="px-4 py-3 text-slate-600 font-mono"
+                                x-text="sched.time || '–'"></td>
+                            <td class="px-4 py-3 text-slate-600"
+                                x-text="formatDays(sched.days)"></td>
+                            <td class="px-4 py-3">
+                                <span class="bg-slate-100 px-2 py-0.5 rounded text-xs font-mono text-slate-600"
+                                      x-text="sched.command || sched.action || '–'"></span>
+                            </td>
+                            <td class="px-4 py-3 text-right">
+                                <span :class="sched.enabled !== false
+                                            ? 'bg-green-100 text-green-700'
+                                            : 'bg-slate-100 text-slate-400'"
+                                      class="text-xs px-2.5 py-0.5 rounded-full font-semibold"
+                                      x-text="sched.enabled !== false ? 'Aktivní' : 'Neaktivní'">
+                                </span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Nastavení plánovače -->
+        <div class="bg-white rounded-xl border border-slate-200 p-5">
+            <h3 class="font-semibold text-slate-800 mb-4">Nastavení plánovače</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div class="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3">
+                    <span class="text-sm text-slate-600">Plánovač</span>
+                    <span :class="settings.enable_scheduler ? 'text-emerald-600' : 'text-slate-400'"
+                          class="text-sm font-semibold"
+                          x-text="settings.enable_scheduler ? 'Zapnut' : 'Vypnut'">
+                    </span>
+                </div>
+                <div class="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3">
+                    <span class="text-sm text-slate-600">Automatické akce</span>
+                    <span :class="settings.auto_execute ? 'text-emerald-600' : 'text-slate-400'"
+                          class="text-sm font-semibold"
+                          x-text="settings.auto_execute ? 'Zapnuto' : 'Vypnuto'">
+                    </span>
+                </div>
+                <div class="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3">
+                    <span class="text-sm text-slate-600">Notifikace</span>
+                    <span :class="settings.notification_enabled ? 'text-emerald-600' : 'text-slate-400'"
+                          class="text-sm font-semibold"
+                          x-text="settings.notification_enabled ? 'Zapnuty' : 'Vypnuty'">
+                    </span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('schedulerPage', () => ({
+        schedules: [],
+        settings: {
+            enable_scheduler: false,
+            auto_execute: false,
+            notification_enabled: false
+        },
+        loading: true,
+        error: null,
+
+        async init() {
+            await this.loadSchedule();
+        },
+
+        async loadSchedule() {
+            this.loading = true;
+            this.error = null;
+            try {
+                const r = await fetch('/api/schedule/');
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const d = await r.json();
+                this.schedules = d.schedules || [];
+                this.settings  = d.settings  || {};
+            } catch (e) {
+                this.error = `Nepodařilo se načíst plán: ${e.message}`;
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        formatDays(days) {
+            if (!days || !Array.isArray(days) || days.length === 0) return 'Každý den';
+            const map = {
+                mon: 'Po', tue: 'Út', wed: 'St',
+                thu: 'Čt', fri: 'Pá', sat: 'So', sun: 'Ne'
+            };
+            return days.map(d => map[d] ?? d).join(', ');
+        }
+    }));
+});
+</script>
+{% endblock %}

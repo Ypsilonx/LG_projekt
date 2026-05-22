@@ -27,6 +27,9 @@ from server_api import ThinQAPI
 from web.routes.devices import router as devices_router
 from web.routes.control import router as control_router
 from web.routes.ws import router as ws_router, manager as ws_manager
+from web.routes.mode import router as mode_router
+from web.routes.weather import router as weather_router
+from web.routes.schedule import router as schedule_router
 
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
@@ -49,10 +52,24 @@ async def lifespan(app: FastAPI):
         app.state.api = api
         app.state.api_error = None
         logger.info("✅ ThinQAPI inicializováno")
+        # Pre-cache device IDs pro MQTT topic parsing
+        try:
+            devs = await api.get_devices()
+            app.state.known_device_ids = {
+                d.get("device_id", "") for d in devs if d.get("device_id")
+            }
+        except Exception:
+            app.state.known_device_ids = set()
     except Exception as exc:
         logger.error(f"❌ ThinQAPI inicializace selhala: {exc}")
         app.state.api = None
         app.state.api_error = str(exc)
+        app.state.known_device_ids = set()
+
+    # Inicializace sdíleného in-memory stavu
+    app.state.control_mode = "AUTO"
+    app.state.weather_cache = None
+    app.state.weather_cache_time = None
 
     # --- MQTT bridge → WebSocket ---
     # Zachytíme aktuální asyncio smyčku, která bude použita pro
@@ -73,8 +90,17 @@ async def lifespan(app: FastAPI):
             # Stav zařízení je zabalen v event.push (viz GUI mixin)
             device_status = data.get("event", {}).get("push", data)
 
+            # Pokus o extrakci device_id z MQTT tématu
+            device_id = None
+            topic_str = str(topic) if topic else ""
+            for dev_id in getattr(app.state, "known_device_ids", set()):
+                if dev_id and dev_id in topic_str:
+                    device_id = dev_id
+                    break
+
             message = {
                 "type": "device_status",
+                "device_id": device_id,
                 "data": device_status,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
@@ -121,6 +147,9 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 app.include_router(devices_router)
 app.include_router(control_router)
 app.include_router(ws_router)
+app.include_router(mode_router)
+app.include_router(weather_router)
+app.include_router(schedule_router)
 
 
 # ---------------------------------------------------------------------------
@@ -154,5 +183,41 @@ async def dashboard(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
-        context={},
+        context={"active_page": "dashboard"},
+    )
+
+
+@app.get("/automation", response_class=HTMLResponse)
+async def automation_page(request: Request):
+    """
+    Stránka automatizace – přepínač HAND/AUTO a předpověď počasí.
+
+    Args:
+        request: HTTP požadavek.
+
+    Returns:
+        HTMLResponse: Vyrendrovaný automation.html.
+    """
+    return templates.TemplateResponse(
+        request=request,
+        name="automation.html",
+        context={"active_page": "automation"},
+    )
+
+
+@app.get("/scheduler", response_class=HTMLResponse)
+async def scheduler_page(request: Request):
+    """
+    Stránka plánování – přehled naplánovaných akcí.
+
+    Args:
+        request: HTTP požadavek.
+
+    Returns:
+        HTMLResponse: Vyrendrovaný scheduler.html.
+    """
+    return templates.TemplateResponse(
+        request=request,
+        name="scheduler.html",
+        context={"active_page": "scheduler"},
     )

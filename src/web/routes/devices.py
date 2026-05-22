@@ -57,7 +57,12 @@ async def get_devices():
         HTTPException 503: Pokud soubor devices.json neexistuje nebo je poškozený
     """
     try:
-        return list_devices()
+        all_devices = list_devices()
+        # Webové rozhraní je určeno výhradně pro klimatizace
+        return [
+            d for d in all_devices
+            if d.get("device_type") == "DEVICE_AIR_CONDITIONER"
+        ]
     except FileNotFoundError as exc:
         logger.error(f"devices.json nenalezen: {exc}")
         raise HTTPException(status_code=503, detail=str(exc))
