@@ -1,0 +1,45 @@
+# .dockerignore – soubory vyloučené z Docker build kontextu
+# Menší kontext = rychlejší build a menší obraz
+
+# Python prostředí a cache
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Verzovací systém
+.git/
+.gitignore
+.gitattributes
+
+# Vývojové nástroje a konfigurace IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Dokumentace (není potřeba v obrazu)
+docs/
+*.md
+!README.md
+
+# GitHub workflow
+.github/
+
+# Testovací soubory
+tests/
+test_*.py
+
+# Citlivá data – NIKDY nepatří do obrazu
+# (skutečná data jsou připojena jako volume)
+data/config.json
+data/devices.json
+data/automation_rules.json
+data/schedule.json
+
+# Logové soubory
+*.log
+logs/

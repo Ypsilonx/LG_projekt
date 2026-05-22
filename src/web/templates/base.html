@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}LG Klimatizace{% endblock %}</title>
+
+    <!-- Tailwind CSS – Play CDN (MVP); pro produkci nahradit build výstupem -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { DEFAULT: "#1d4ed8", light: "#3b82f6", dark: "#1e3a8a" }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Alpine.js – reaktivní UI bez build kroku -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+
+    <!-- Navigační lišta -->
+    <nav class="bg-brand shadow-md">
+        <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2 text-white font-semibold text-lg">
+                <span class="text-xl">❄</span>
+                <span>LG Klimatizace</span>
+            </a>
+            <div class="flex gap-6 text-sm font-medium">
+                <a href="/"
+                   class="text-blue-200 hover:text-white transition-colors
+                          {% if active_page == 'dashboard' %}!text-white border-b-2 border-white pb-0.5{% endif %}">
+                    Dashboard
+                </a>
+                <a href="/automation"
+                   class="text-blue-200 hover:text-white transition-colors
+                          {% if active_page == 'automation' %}!text-white border-b-2 border-white pb-0.5{% endif %}">
+                    Automatizace
+                </a>
+                <a href="/scheduler"
+                   class="text-blue-200 hover:text-white transition-colors
+                          {% if active_page == 'scheduler' %}!text-white border-b-2 border-white pb-0.5{% endif %}">
+                    Plánování
+                </a>
+                <a href="/docs"
+                   target="_blank"
+                   class="text-blue-200 hover:text-white transition-colors">
+                    API&nbsp;docs
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hlavní obsah stránky -->
+    <main class="max-w-5xl mx-auto px-4 py-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Patička -->
+    <footer class="mt-12 text-center text-xs text-slate-400 pb-4">
+        LG ThinQ Klimatizace &middot; <a href="/health" class="hover:underline">/health</a>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

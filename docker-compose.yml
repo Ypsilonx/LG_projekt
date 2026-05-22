@@ -1,0 +1,45 @@
+# docker-compose.yml – LG ThinQ Klimatizace
+# Spuštění: docker compose up -d
+# Zastavení: docker compose down
+#
+# Data složka (data/) musí obsahovat:
+#   config.json        – přístupový token a nastavení
+#   devices.json       – seznam zařízení
+#   automation_rules.json – pravidla automatizace
+#
+# Příklady jsou v data/*.json.example
+
+services:
+  lg-klimatizace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lg-klimatizace:latest
+    container_name: lg-klimatizace
+    ports:
+      # HOST_PORT:CONTAINER_PORT
+      # Změňte HOST_PORT pokud 8000 je obsazeno (např. "8080:8000")
+      - "8000:8000"
+    volumes:
+      # Data složka je read-write – schedule.json a jiné soubory se zapisují za běhu
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Prague
+    restart: unless-stopped
+    # Healthcheck je definován v Dockerfile; compose ho zdědí automaticky
+
+  # ----------------------------------------------------------------
+  # Cloudflare Tunnel – přístup z internetu bez otevřených portů
+  # Aktivujte odkomentováním; token získáte na dash.cloudflare.com
+  # Docs: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
+  # ----------------------------------------------------------------
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   container_name: lg-cloudflared
+  #   restart: unless-stopped
+  #   command: tunnel --no-autoupdate run
+  #   environment:
+  #     - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+  #   depends_on:
+  #     - lg-klimatizace

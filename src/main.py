@@ -13,12 +13,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent))
 from server_api import get_ac_device_id, get_device_id_by_alias, list_devices
 from command_policy import build_command_plan
+from command_executor import create_payload_for_step, apply_status_hint, execute_plan
 
 def main():
     """Hlavní funkce aplikace"""
     parser = argparse.ArgumentParser(description="LG ThinQ Klimatizace - Ovládání & Plánování")
-    parser.add_argument("--mode", choices=["gui", "cli"], default="gui", 
-                       help="Režim spuštění: gui (výchozí) nebo cli")
+    parser.add_argument("--mode", choices=["gui", "cli", "web"], default="gui",
+                       help="Režim spuštění: gui (výchozí), cli nebo web")
     parser.add_argument("--list-devices", action="store_true",
                        help="Vypíše dostupná zařízení z devices.json (CLI)")
     parser.add_argument("--device-id", type=str,
@@ -34,6 +35,8 @@ def main():
     
     if args.mode == "gui":
         run_gui()
+    elif args.mode == "web":
+        run_web()
     elif args.mode == "cli":
         # CLI režim
         print("LG ThinQ Klimatizace - CLI režim")
@@ -49,6 +52,35 @@ def main():
         else:
             print("Pro CLI režim zadejte --status, --command nebo --list-devices")
             parser.print_help()
+
+def run_web():
+    """
+    Spustí webový server (FastAPI + uvicorn).
+
+    Server naslouchá na 0.0.0.0:8000, takže je dostupný z celé sítě.
+    V Docker kontejneru je port namapován přes docker-compose.yml.
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        print("Chyba: uvicorn není nainstalován. Spusťte: pip install uvicorn[standard]")
+        sys.exit(1)
+
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(name)s – %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    host = "0.0.0.0"
+    port = 8000
+    print(f"Spouštím webový server – http://{host}:{port}")
+    print("Swagger API docs: http://localhost:8000/docs")
+    # Předáváme string 'web.app:app' – src/ je v sys.path (přidáno výše v main.py),
+    # takže uvicorn najde modul web/app.py správně.
+    uvicorn.run("web.app:app", host=host, port=port, reload=False)
+
 
 def run_cli():
     """Spuštění interaktivního CLI režimu (zpětná kompatibilita)."""
@@ -144,7 +176,6 @@ async def cli_execute_command(device_id, command, device_alias=None):
     """CLI funkce pro provedení příkazu"""
     try:
         from server_api import ThinQAPI
-        from klima_logic import create_control_payload
         
         api = ThinQAPI()
         await api.initialize()
@@ -160,26 +191,8 @@ async def cli_execute_command(device_id, command, device_alias=None):
             await api.close()
             return
 
-        for idx, step in enumerate(plan.steps):
-            payload = create_payload_for_internal_command(
-                step.command,
-                step.args,
-                status,
-                create_control_payload,
-            )
-
-            if payload is None:
-                print(f"Neznámý krok plánu: {step.command}")
-                continue
-
-            result = await api.send_device_command(device_id, payload)
-            print(f"Příkaz '{step.command}' úspěšně odeslán: {result}")
-
-            status = apply_status_hint(status, step.command, step.args)
-
-            is_last = idx == len(plan.steps) - 1
-            if not is_last and step.delay_after_seconds > 0:
-                await asyncio.sleep(step.delay_after_seconds)
+        for step_result in await execute_plan(api, device_id, plan, status):
+            print(f"Příkaz '{step_result['step']}' úspěšně odeslán: {step_result['result']}")
         
         await api.close()
         
@@ -218,80 +231,6 @@ def parse_cli_command(command: str) -> tuple[str, tuple[Any, ...]]:
         "mode_fan, mode_auto, temp_22, atd."
     )
 
-
-def create_payload_for_internal_command(
-    command: str,
-    args: tuple[Any, ...],
-    status: dict,
-    create_control_payload,
-) -> dict | None:
-    """
-    Vytvoří payload pro interní krok příkazu.
-
-    Args:
-        command: Interní název příkazu
-        args: Argumenty kroku
-        status: Aktuální snapshot stavu
-        create_control_payload: Tovární funkce payloadů
-
-    Returns:
-        dict | None: Payload pro API, nebo None při neznámém příkazu
-    """
-    if command == "power_on":
-        return create_control_payload("power", "POWER_ON")
-    if command == "power_off":
-        return create_control_payload("power", "POWER_OFF")
-    if command == "toggle_power":
-        current_power = status.get("operation", {}).get("airConOperationMode", "POWER_OFF")
-        target = "POWER_ON" if current_power == "POWER_OFF" else "POWER_OFF"
-        return create_control_payload("power", target)
-    if command == "change_mode":
-        return create_control_payload("mode", args[0])
-    if command == "set_temperature":
-        return create_control_payload("temperature", args[0])
-    if command == "set_wind_strength":
-        return create_control_payload("wind_strength", args[0])
-    if command == "set_wind_direction":
-        return create_control_payload("wind_direction", args[0], args[1])
-    if command == "set_power_save":
-        return create_control_payload("power_save", args[0])
-    if command == "set_sleep_timer":
-        return create_control_payload("sleep_timer", args[0], args[1])
-    if command == "cancel_all_timers":
-        return create_control_payload("cancel_timers")
-    return None
-
-
-def apply_status_hint(status: dict, command: str, args: tuple[Any, ...]) -> dict:
-    """
-    Aplikuje odhad lokální změny stavu po úspěšném příkazu v CLI.
-
-    Args:
-        status: Aktuální snapshot stavu
-        command: Provedený interní příkaz
-        args: Argumenty příkazu
-
-    Returns:
-        dict: Aktualizovaný snapshot stavu
-    """
-    if command == "power_on":
-        status.setdefault("operation", {})["airConOperationMode"] = "POWER_ON"
-    elif command == "power_off":
-        status.setdefault("operation", {})["airConOperationMode"] = "POWER_OFF"
-    elif command == "change_mode":
-        status.setdefault("airConJobMode", {})["currentJobMode"] = args[0]
-    elif command == "set_temperature":
-        status.setdefault("temperature", {})["targetTemperature"] = args[0]
-    elif command == "set_wind_strength":
-        status.setdefault("airFlow", {})["windStrength"] = args[0]
-    elif command == "set_wind_direction":
-        wind = status.setdefault("windDirection", {})
-        wind["rotateUpDown"] = bool(args[0])
-        wind["rotateLeftRight"] = bool(args[1])
-    elif command == "set_power_save":
-        status.setdefault("powerSave", {})["powerSaveEnabled"] = bool(args[0])
-
-    return status
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

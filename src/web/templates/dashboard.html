@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% set active_page = "dashboard" %}
+
+{% block title %}Dashboard – LG Klimatizace{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold text-slate-800">Dashboard</h1>
+    <p class="text-slate-500 text-sm mt-1">Přehled stavu a ovládání klimatizace</p>
+</div>
+
+<!-- Placeholder karta – bude nahrazena dynamickým obsahem v Kroku 2 -->
+<div class="bg-white rounded-2xl shadow p-8 flex flex-col items-center justify-center gap-3 text-slate-400">
+    <span class="text-4xl">❄</span>
+    <p class="text-base font-medium">Webové rozhraní je připraveno.</p>
+    <p class="text-sm">Připojení ke klimatizaci bude aktivováno v dalším kroku vývoje.</p>
+    <a href="/health"
+       class="mt-2 text-xs bg-slate-100 hover:bg-slate-200 transition-colors
+              rounded-lg px-4 py-2 font-mono text-slate-500">
+        GET /health
+    </a>
+</div>
+{% endblock %}

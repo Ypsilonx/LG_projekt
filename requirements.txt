@@ -19,7 +19,14 @@ pyOpenSSL==25.1.0
 # HTTP klient pro zpětnou kompatibilitu (frontend.py)
 requests==2.32.4
 
+# Web server (FastAPI + uvicorn)
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+jinja2==3.1.6
+python-multipart==0.0.20
+
 # Poznámka: tkinter je součástí standardní knihovny Python.
-# Na Linuxu: sudo apt-get install python3-tk (Ubuntu/Debian)
+# V Docker obrazu (Linux/headless) tkinter není potřeba – aplikace běží v režimu --mode web.
+# Na Linuxu pro desktop GUI: sudo apt-get install python3-tk (Ubuntu/Debian)
 #            sudo dnf install python3-tkinter (Fedora)
 #            sudo pacman -S tk (Arch)
