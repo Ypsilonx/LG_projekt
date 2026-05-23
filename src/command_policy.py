@@ -10,6 +10,8 @@ kolize při rychlém sekvenčním ovládání.
 from dataclasses import dataclass
 from typing import Any
 
+from profile_limits import get_temp_limits
+
 
 @dataclass(frozen=True)
 class CommandStep:
@@ -175,14 +177,33 @@ def build_command_plan(
                 steps=[],
                 skip_reason="Teplotu nelze měnit v režimu FAN. Nejprve změňte režim.",
             )
+        if args:
+            try:
+                temp_val = float(args[0])
+                limits = get_temp_limits(job_mode)
+                if limits and not (limits["min"] <= temp_val <= limits["max"]):
+                    return CommandPlan(
+                        steps=[],
+                        skip_reason=(
+                            f"Teplota {temp_val}°C je mimo povolený rozsah "
+                            f"{limits['min']}–{limits['max']}°C pro režim {job_mode or 'neznámý'}."
+                        ),
+                    )
+            except (TypeError, ValueError):
+                pass
         steps.append(CommandStep("set_temperature", args, delay_after_seconds=1.5))
         return CommandPlan(steps=steps)
 
     if command == "set_wind_strength":
-        current_strength = device_status.get("airFlow", {}).get("windStrength")
         target_strength = args[0] if args else None
-        if target_strength and target_strength == current_strength:
-            return CommandPlan(steps=[], skip_reason="Síla větru je již nastavena.")
+        air = device_status.get("airFlow", {})
+        if target_strength == "NATURE":
+            # NATURE mód se ukládá do windStrengthDetail, ne windStrength
+            if air.get("windStrengthDetail") == "NATURE":
+                return CommandPlan(steps=[], skip_reason="Ventilátor je již v režimu Přírodní.")
+        else:
+            if target_strength and target_strength == air.get("windStrength"):
+                return CommandPlan(steps=[], skip_reason="Síla větru je již nastavena.")
         steps.append(CommandStep("set_wind_strength", args, delay_after_seconds=0.8))
         return CommandPlan(steps=steps)
 
@@ -195,6 +216,22 @@ def build_command_plan(
         if (target_updown, target_leftright) == (current_updown, current_leftright):
             return CommandPlan(steps=[], skip_reason="Směr větru je již nastaven.")
         steps.append(CommandStep("set_wind_direction", args, delay_after_seconds=0.8))
+        return CommandPlan(steps=steps)
+
+    if command == "set_rotate_updown":
+        target = bool(args[0]) if args else False
+        current = bool(device_status.get("windDirection", {}).get("rotateUpDown", False))
+        if target == current:
+            return CommandPlan(steps=[], skip_reason="Vertikální kývání je již v tomto stavu.")
+        steps.append(CommandStep("set_rotate_updown", args, delay_after_seconds=0.8))
+        return CommandPlan(steps=steps)
+
+    if command == "set_rotate_leftright":
+        target = bool(args[0]) if args else False
+        current = bool(device_status.get("windDirection", {}).get("rotateLeftRight", False))
+        if target == current:
+            return CommandPlan(steps=[], skip_reason="Horizontální kývání je již v tomto stavu.")
+        steps.append(CommandStep("set_rotate_leftright", args, delay_after_seconds=0.8))
         return CommandPlan(steps=steps)
 
     if command == "set_power_save":

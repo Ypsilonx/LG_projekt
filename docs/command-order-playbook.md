@@ -48,6 +48,14 @@ Doporucene poradi pri zmene nastaveni klimatizace:
 - set_wind_direction:
   - Vyzaduje zapnute zarizeni.
   - Pokud je hodnota stejna, prikaz preskocit.
+- set_rotate_updown:
+  - Vyzaduje zapnute zarizeni.
+  - Odesila POUZE klic `rotateUpDown` v payload `windDirection` – nesmi byt kombinovano s `rotateLeftRight` v jednom pozadavku (device-side konflikt).
+  - Pokud je hodnota stejna jako aktualni stav, prikaz preskocit.
+- set_rotate_leftright:
+  - Vyzaduje zapnute zarizeni.
+  - Odesila POUZE klic `rotateLeftRight` v payload `windDirection` – viz poznamka u `set_rotate_updown`.
+  - Pokud je hodnota stejna jako aktualni stav, prikaz preskocit.
 - set_power_save:
   - Vyzaduje zapnute zarizeni.
   - Pokud je hodnota stejna, prikaz preskocit.

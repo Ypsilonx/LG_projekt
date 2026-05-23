@@ -67,6 +67,9 @@ def create_control_payload(command_type: str, *args, **kwargs):
         
         elif command_type == "wind_strength":
             strength = args[0] if args else "AUTO"
+            # NATURE mód používá jiný klíč (windStrengthDetail) než ostatní stupně
+            if strength == "NATURE":
+                return {"airFlow": {"windStrengthDetail": "NATURE"}}
             return {"airFlow": {"windStrength": strength}}
         
         elif command_type == "wind_direction":
@@ -78,6 +81,14 @@ def create_control_payload(command_type: str, *args, **kwargs):
                     "rotateLeftRight": leftright
                 }
             }
+
+        elif command_type == "rotate_updown":
+            # Pouze vertikální klíč – neovlivňuje horizontální lopatky
+            return {"windDirection": {"rotateUpDown": bool(args[0]) if args else False}}
+
+        elif command_type == "rotate_leftright":
+            # Pouze horizontální klíč – neovlivňuje vertikální lopatky
+            return {"windDirection": {"rotateLeftRight": bool(args[0]) if args else False}}
         
         elif command_type == "power_save":
             enabled = args[0] if args else False

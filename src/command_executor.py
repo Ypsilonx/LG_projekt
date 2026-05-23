@@ -51,6 +51,10 @@ def create_payload_for_step(command: str, args: tuple[Any, ...], status: dict) -
         return create_control_payload("wind_strength", args[0])
     if command == "set_wind_direction":
         return create_control_payload("wind_direction", args[0], args[1])
+    if command == "set_rotate_updown":
+        return create_control_payload("rotate_updown", args[0])
+    if command == "set_rotate_leftright":
+        return create_control_payload("rotate_leftright", args[0])
     if command == "set_power_save":
         return create_control_payload("power_save", args[0])
     if command == "set_sleep_timer":
@@ -84,11 +88,18 @@ def apply_status_hint(status: dict, command: str, args: tuple[Any, ...]) -> dict
     elif command == "set_temperature":
         status.setdefault("temperature", {})["targetTemperature"] = args[0]
     elif command == "set_wind_strength":
-        status.setdefault("airFlow", {})["windStrength"] = args[0]
+        if args and args[0] == "NATURE":
+            status.setdefault("airFlow", {})["windStrengthDetail"] = "NATURE"
+        else:
+            status.setdefault("airFlow", {})["windStrength"] = args[0] if args else "AUTO"
     elif command == "set_wind_direction":
         wind = status.setdefault("windDirection", {})
         wind["rotateUpDown"] = bool(args[0])
         wind["rotateLeftRight"] = bool(args[1])
+    elif command == "set_rotate_updown":
+        status.setdefault("windDirection", {})["rotateUpDown"] = bool(args[0])
+    elif command == "set_rotate_leftright":
+        status.setdefault("windDirection", {})["rotateLeftRight"] = bool(args[0])
     elif command == "set_power_save":
         status.setdefault("powerSave", {})["powerSaveEnabled"] = bool(args[0])
     return status

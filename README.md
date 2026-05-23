@@ -10,10 +10,10 @@ FastAPI webová aplikace pro ovládání LG ThinQ klimatizací. Real-time MQTT p
 
 - **Webové rozhraní** – single-page dashboard (Tailwind CSS + Alpine.js), tmavý motiv, bez instalace klienta
 - **Real-time push** – MQTT → WebSocket; stavové změny se promítají automaticky (indikátor "Push"/"Offline")
-- **Ovládání klimatizace** – power, režimy (COOL/HEAT/FAN/AUTO/AIR_DRY), teplota 16–30 °C, větrání, směr lamel
+- **Ovládání klimatizace** – power, režimy (COOL/HEAT/FAN/AUTO/AIR_DRY), teplota se sliderem + debounce (°C krok), větrání; ovládání polohy lamel není podporováno ThinQ Connect API
 - **AUTO / HAND** – AUTO = sezónní pravidla + PID regulace; HAND = ruční ovládání + HAND scheduler
 - **HAND scheduler** – CRUD plánů: čas od/do, dny v týdnu, akce (mód/teplota/ventilátor), enable/disable
-- **ČHMÚ forecast** – meteogram POI 510, horizont 24 h, cache 3 h, fallback na region RPZL; zobrazení teploty, oblačnosti, srážek, větru a vlhkosti
+- **ČHMÚ forecast** – meteogram POI 510, horizont 24 h, cache 3 h, fallback na region RPZL; widget s záložkami **Aktuální stav** (vítr, vlhkost, srážky, oblačnost) / **Předpověď** (denní min/max teplota) / **Hodinová** (scroll kartičky); směr větru `wind_dir_deg`
 - **Sezónní automatika** – zima/přechod/léto, blokace COOL mimo léto, PID-like regulace cílové teploty
 - **Energy reporting** – den/týden/měsíc/rok, export CSV
 - **Docker** – `docker-compose up`, dostupné z domácí sítě, volitelný Cloudflare Tunnel
@@ -152,8 +152,12 @@ docker-compose logs -f lg-klimatizace
 | Režim | `change_mode` | `COOL` `HEAT` `FAN` `AUTO` `AIR_DRY` |
 | Teplota | `set_temperature` | 16–30 °C |
 | Větrání | `set_wind_strength` | `AUTO` `LOW` `MID` `HIGH` |
-| Směr | `set_wind_direction` | nahoru/dolů, vlevo/vpravo |
+| Směr větru | `set_wind_direction` | nahoru/dolů, vlevo/vpravo |
+| Lamely – kývání | `set_rotate_updown` | `true` / `false` |
+| Lamely – kývání | `set_rotate_leftright` | `true` / `false` |
 | Timer | `set_sleep_timer`, `cancel_all_timers` | minuty |
+
+> ⚠️ ThinQ Connect API nepodporuje nastavení konkrétní polohy lamel – pouze boolean zapnutí/vypnutí kývání. Každá osa musí být odeslána jako **samostatný příkaz** (současné odeslání obou os způsobuje konflikt v zařízení).
 
 ## Bezpečnost
 

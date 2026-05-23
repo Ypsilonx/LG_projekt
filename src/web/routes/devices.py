@@ -105,3 +105,24 @@ async def get_device_status(device_id: str, request: Request):
         if "not found" in error_str.lower() or "404" in error_str:
             raise HTTPException(status_code=404, detail=f"Zařízení {device_id[:8]}... nenalezeno")
         raise HTTPException(status_code=503, detail=f"ThinQ API chyba: {error_str}")
+
+
+@router.get(
+    "/profile-limits",
+    summary="Teplotní limity z device profilu",
+    description=(
+        "Vrátí povolené teplotní rozsahy (min, max °C) pro každý pracovní režim "
+        "klimatizace. Data jsou čtena z ``data/device_profile.json``. "
+        "Frontend je používá pro dynamické zobrazení rozsahu a validaci vstupu."
+    ),
+)
+async def get_profile_limits() -> dict:
+    """
+    Načte a vrátí per-mód teplotní limity z device_profile.json.
+
+    Returns:
+        dict: Klíče jsou názvy módů (COOL, HEAT, AUTO, AIR_DRY, FAN).
+              Hodnota je ``{"min": int, "max": int}`` nebo ``null`` pro FAN.
+    """
+    from profile_limits import get_all_temp_limits
+    return get_all_temp_limits()

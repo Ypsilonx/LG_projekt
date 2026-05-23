@@ -295,3 +295,31 @@ async def toggle_schedule_entry(entry_id: str) -> dict:
         logger.exception("Chyba při přepínání plánu %s", entry_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     raise HTTPException(status_code=404, detail=f"Plán '{entry_id}' nenalezen.")
+
+
+@router.patch("/settings", summary="Aktualizovat nastavení plánovače")
+async def patch_schedule_settings(body: dict[str, Any]) -> dict:
+    """Přepíše vybraná pole v ``settings`` části schedule.json.
+
+    Podporovaná pole: ``enable_scheduler`` (bool), ``auto_execute`` (bool).
+    Ostatní klíče jsou ignorovány.
+
+    Args:
+        body: Slovník s novými hodnotami, např. ``{"enable_scheduler": true}``.
+
+    Returns:
+        dict: Aktualizovaná ``settings`` sekce.
+
+    Raises:
+        HTTPException 500: Chyba zápisu souboru.
+    """
+    allowed = {"enable_scheduler", "auto_execute"}
+    update = {k: bool(v) for k, v in body.items() if k in allowed}
+    try:
+        data = _read_schedule()
+        data.setdefault("settings", {}).update(update)
+        _write_schedule(data)
+        return data["settings"]
+    except Exception as exc:
+        logger.exception("Chyba při aktualizaci nastavení plánovače")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

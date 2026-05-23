@@ -104,7 +104,10 @@ async def get_weather_forecast(request: Request) -> dict:
         raw_points: list = payload.get("data", []) if isinstance(payload, dict) else []
         horizon_cutoff = now_utc + timedelta(hours=horizon_h)
 
-        hourly = []
+        _CZECH_DAYS = ["Pondělí", "Úterý", "Středa", "Čtvrtek", "Pátek", "Sobota", "Neděle"]
+        hourly: list[dict] = []
+        _daily_map: dict[str, dict] = {}  # date_label -> akumulátor
+
         for row in raw_points:
             if not isinstance(row, dict):
                 continue
@@ -122,10 +125,11 @@ async def get_weather_forecast(request: Request) -> dict:
                 continue
 
             local_dt = dt_utc.astimezone()
+            date_key = local_dt.strftime("%d.%m.")
             point: dict = {
                 "time_utc": dt_utc.isoformat(),
                 "time_label": local_dt.strftime("%H:%M"),
-                "date_label": local_dt.strftime("%d.%m."),
+                "date_label": date_key,
                 "temp_c": round(float(t2m) + sensor_offset, 1),
                 "temp_raw_c": round(float(t2m), 1),
             }
@@ -136,6 +140,7 @@ async def get_weather_forecast(request: Request) -> dict:
                 ("rr1h", "precip_mm_h"),
                 ("rh2m", "humidity_pct"),
                 ("ff10m", "wind_ms"),
+                ("dd", "wind_dir_deg"),   # směr větru ve stupních
             ):
                 val = row.get(src_key)
                 if val is not None:
@@ -146,6 +151,38 @@ async def get_weather_forecast(request: Request) -> dict:
 
             hourly.append(point)
 
+            # Akumulace hodnot pro denní agregáty
+            if date_key not in _daily_map:
+                _daily_map[date_key] = {
+                    "date_label": date_key,
+                    "day_name": _CZECH_DAYS[local_dt.weekday()],
+                    "temps": [],
+                    "precips": [],
+                    "cloudiness": [],
+                }
+            entry = _daily_map[date_key]
+            entry["temps"].append(point["temp_c"])
+            if "precip_mm_h" in point:
+                entry["precips"].append(point["precip_mm_h"])
+            if "cloudiness_pct" in point:
+                entry["cloudiness"].append(point["cloudiness_pct"])
+
+        # Denní sumáře – min/max teplota, celkové srážky, průměrná oblačnost
+        daily: list[dict] = [
+            {
+                "date_label": d["date_label"],
+                "day_name": d["day_name"],
+                "min_temp_c": round(min(d["temps"]), 1),
+                "max_temp_c": round(max(d["temps"]), 1),
+                "total_precip_mm": round(sum(d["precips"]), 1) if d["precips"] else 0.0,
+                "avg_cloudiness_pct": (
+                    round(sum(d["cloudiness"]) / len(d["cloudiness"]))
+                    if d["cloudiness"] else None
+                ),
+            }
+            for d in _daily_map.values()
+        ]
+
         result: dict = {
             "enabled": True,
             "location": location,
@@ -154,6 +191,7 @@ async def get_weather_forecast(request: Request) -> dict:
             "horizon_hours": horizon_h,
             "fetched_at": now_utc.isoformat(),
             "hourly": hourly,
+            "daily": daily,
         }
         request.app.state.weather_cache = result
         request.app.state.weather_cache_time = now_utc

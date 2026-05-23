@@ -23,17 +23,17 @@
         ],
         "value": {
           "r": [
-            "AUTO",
-            "AIR_DRY",
             "COOL",
+            "AUTO",
             "HEAT",
+            "AIR_DRY",
             "FAN"
           ],
           "w": [
-            "AUTO",
-            "AIR_DRY",
             "COOL",
+            "AUTO",
             "HEAT",
+            "AIR_DRY",
             "FAN"
           ]
         }
@@ -48,12 +48,12 @@
         ],
         "value": {
           "r": [
-            "POWER_OFF",
-            "POWER_ON"
+            "POWER_ON",
+            "POWER_OFF"
           ],
           "w": [
-            "POWER_OFF",
-            "POWER_ON"
+            "POWER_ON",
+            "POWER_OFF"
           ]
         }
       }

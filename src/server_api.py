@@ -263,6 +263,33 @@ class ThinQAPI:
         """Vrací True pokud je MQTT aktivní."""
         return self._mqtt is not None and self._mqtt.is_connected
 
+    async def subscribe_device_events(self, device_id: str) -> bool:
+        """
+        Přihlásí odběr event notifikací pro dané zařízení.
+
+        LG ThinQ platforma posílá přes MQTT notifikace o změně stavu zařízení
+        jen pokud je aktivní event subscripce pro daný device_id. Bez tohoto
+        volání MQTT doručuje jen systémové zprávy (registrace/odjmutí zařízení),
+        nikoli změny stavu z externích zdrojů (LG aplikace v telefonu, ovladač).
+
+        Subscripce vyprší za 4464 hodin (≈ 186 dní). Po restartu serveru
+        je třeba volat znovu.
+
+        Args:
+            device_id: ThinQ ID zařízení
+
+        Returns:
+            bool: True pokud subscripce proběhla úspěšně
+        """
+        api = await self.initialize()
+        try:
+            await api.async_post_event_subscribe(device_id)
+            logger.info("✅ Event subscripce aktivována pro %s...", device_id[:8])
+            return True
+        except Exception as exc:
+            logger.warning("⚠️ Event subscripce selhala pro %s...: %s", device_id[:8], exc)
+            return False
+
     # ------------------------------------------------------------------
     # HTTP operace se zařízeními
     # ------------------------------------------------------------------

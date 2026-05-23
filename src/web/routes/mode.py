@@ -8,8 +8,10 @@ Přepnutí je okamžitě broadcastováno všem WebSocket klientům.
 Stav je in-memory – při restartu serveru se resetuje na výchozí ``"AUTO"``.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -17,6 +19,25 @@ from pydantic import BaseModel
 from web.routes.ws import manager as ws_manager
 
 logger = logging.getLogger(__name__)
+
+# Soubor pro perzistenci control_mode mezi restarty serveru
+_STATE_FILE = Path(__file__).resolve().parents[3] / "data" / "state.json"
+
+
+def _save_control_mode(mode: str) -> None:
+    """
+    Uloží control_mode do data/state.json.
+
+    Args:
+        mode: "AUTO" nebo "HAND" – hodnota k uložení.
+    """
+    try:
+        _STATE_FILE.write_text(
+            json.dumps({"control_mode": mode}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.warning("Nelze uložit control_mode do state.json: %s", exc)
 
 router = APIRouter(prefix="/api/mode", tags=["Režim řízení"])
 
@@ -71,6 +92,7 @@ async def set_mode(body: ModeRequest, request: Request) -> dict:
 
     old_mode: str = getattr(request.app.state, "control_mode", "AUTO")
     request.app.state.control_mode = mode
+    _save_control_mode(mode)
 
     if mode != old_mode:
         await ws_manager.broadcast(

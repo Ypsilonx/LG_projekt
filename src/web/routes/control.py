@@ -33,6 +33,8 @@ ALLOWED_COMMANDS = {
     "set_temperature",
     "set_wind_strength",
     "set_wind_direction",
+    "set_rotate_updown",
+    "set_rotate_leftright",
     "set_power_save",
     "cancel_all_timers",
 }
