@@ -1,0 +1,13 @@
+[flake8]
+max-line-length = 100
+max-complexity = 10
+exclude =
+    .venv,
+    __pycache__,
+    .git,
+    data/
+# Strict: syntax errors, undefined names, invalid escapes
+# (odpovídá CI kroku "Stop the build")
+per-file-ignores =
+    # gui soubory mohou mít delší řádky kvůli Tkinter definicím
+    src/gui/*.py: E501

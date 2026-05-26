@@ -540,7 +540,7 @@ class AutomationEnergyMixin:
                 )
             except Exception as e:
                 logger.error(f"❌ Chyba pri nacitani energy dat: {e}")
-                self.after(0, lambda: self.energy_panel.show_error(str(e)))
+                self.after(0, lambda err=e: self.energy_panel.show_error(str(err)))
 
         future = asyncio.run_coroutine_threadsafe(_fetch(), self.loop)
         future.add_done_callback(_done)

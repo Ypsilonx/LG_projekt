@@ -9,32 +9,31 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
 
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
-    
-    - name: Install dependencies
+        python-version: "3.12"
+
+    # Lint závislosti jsou minimální – flake8 nepotřebuje thinqconnect/awscrt
+    - name: Install lint dependencies
       run: |
         python -m pip install --upgrade pip
         pip install flake8
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    
-    - name: Lint with flake8
+
+    - name: Lint – syntax errors & undefined names (hard fail)
       run: |
-        # Stop the build if there are Python syntax errors or undefined names
         flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
-        # Exit-zero treats all errors as warnings
-        flake8 src/ --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics
-    
-    - name: Check UTF-8 encoding
+
+    - name: Lint – style warnings (soft, exit-zero)
+      run: |
+        flake8 src/ --count --exit-zero --statistics
+
+    - name: Check UTF-8 encoding headers
       run: |
         echo "Checking UTF-8 encoding headers..."
-        grep -r "# -*- coding: utf-8 -*-" src/ || echo "Warning: Some files may be missing UTF-8 headers"
+        grep -rl "# -*- coding: utf-8 -*-" src/ | wc -l
+        grep -rL "# -*- coding: utf-8 -*-" src/*.py src/**/*.py || true
