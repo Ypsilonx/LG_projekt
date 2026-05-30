@@ -53,46 +53,27 @@ async def get_weather_config() -> dict:
     return _load_weather_config()
 
 
-@router.get("/forecast", summary="Hodinový forecast")
-async def get_weather_forecast(request: Request) -> dict:
-    """
-    Vrátí hodinový forecast z ČHMÚ meteogram API.
+async def _fetch_weather_data(config: dict) -> dict:
+    """Stáhne a zparsuje hodinová meteogram data z ČHMÚ API.
 
-    Cachuje výsledek v ``app.state.weather_cache`` po dobu
-    ``refresh_interval_hours`` (výchozí 3 h). Každý bod obsahuje teplotu
-    a volitelně oblačnost (``cloudiness_pct``), srážky (``precip_mm_h``)
-    a vlhkost (``humidity_pct``).
+    Provede HTTP GET na ČHMÚ meteogram endpoint a vrátí strukturovaný
+    výsledek s hodinovými a denními daty. Nemodifikuje stav aplikace –
+    zápisem do cache se stará volající (route nebo background task).
 
     Args:
-        request: HTTP požadavek – přístup k ``app.state``.
+        config: Sekce ``weather`` z automation_rules.json.
 
     Returns:
-        dict: ``{enabled, location, fetched_at, horizon_hours,
-                 sensor_offset_c, hourly: [...]}``.
-              Při chybě downloadu vrátí ``{..., error: str, hourly: []}``.
+        dict: Výsledek s klíčem ``hourly`` a ``daily``. Při selhání
+              obsahuje klíč ``error`` s popisem chyby.
     """
-    config = _load_weather_config()
-
-    if not config.get("enabled", False):
-        return {"enabled": False, "hourly": [], "location": None}
-
-    now_utc = datetime.now(timezone.utc)
-    refresh_hours = float(config.get("refresh_interval_hours", 3))
-
-    # Zkontroluj platnost cache
-    cache = getattr(request.app.state, "weather_cache", None)
-    cache_time: datetime | None = getattr(request.app.state, "weather_cache_time", None)
-    if cache is not None and cache_time is not None:
-        age_hours = (now_utc - cache_time).total_seconds() / 3600
-        if age_hours < refresh_hours:
-            return cache
-
-    # --- Stáhni čerstvá data ---
     poi_id = str(config.get("chmi_meteogram_poi_id", "510"))
     location = config.get("chmi_location_label", "")
     sensor_offset = float(config.get("sensor_offset_c", 0.0))
     horizon_h = int(config.get("forecast_horizon_hours", 24))
     url = f"{_METEOGRAM_BASE}/{poi_id}"
+    now_utc = datetime.now(timezone.utc)
+    horizon_cutoff = now_utc + timedelta(hours=horizon_h)
 
     try:
         timeout = aiohttp.ClientTimeout(total=12)
@@ -102,7 +83,6 @@ async def get_weather_forecast(request: Request) -> dict:
                 payload = await resp.json(content_type=None)
 
         raw_points: list = payload.get("data", []) if isinstance(payload, dict) else []
-        horizon_cutoff = now_utc + timedelta(hours=horizon_h)
 
         _CZECH_DAYS = ["Pondělí", "Úterý", "Středa", "Čtvrtek", "Pátek", "Sobota", "Neděle"]
         hourly: list[dict] = []
@@ -183,7 +163,7 @@ async def get_weather_forecast(request: Request) -> dict:
             for d in _daily_map.values()
         ]
 
-        result: dict = {
+        return {
             "enabled": True,
             "location": location,
             "poi_id": poi_id,
@@ -193,9 +173,6 @@ async def get_weather_forecast(request: Request) -> dict:
             "hourly": hourly,
             "daily": daily,
         }
-        request.app.state.weather_cache = result
-        request.app.state.weather_cache_time = now_utc
-        return result
 
     except aiohttp.ClientError as exc:
         logger.warning("ČHMÚ meteogram fetch chyba: %s", exc)
@@ -217,3 +194,44 @@ async def get_weather_forecast(request: Request) -> dict:
             "error": "Interní chyba serveru",
             "hourly": [],
         }
+
+
+@router.get("/forecast", summary="Hodinový forecast")
+async def get_weather_forecast(request: Request) -> dict:
+    """
+    Vrátí hodinový forecast z ČHMÚ meteogram API.
+
+    Cachuje výsledek v ``app.state.weather_cache`` po dobu
+    ``refresh_interval_hours`` (výchozí 3 h). Každý bod obsahuje teplotu
+    a volitelně oblačnost (``cloudiness_pct``), srážky (``precip_mm_h``)
+    a vlhkost (``humidity_pct``).
+
+    Args:
+        request: HTTP požadavek – přístup k ``app.state``.
+
+    Returns:
+        dict: ``{enabled, location, fetched_at, horizon_hours,
+                 sensor_offset_c, hourly: [...]}``.
+              Při chybě downloadu vrátí ``{..., error: str, hourly: []}``.
+    """
+    config = _load_weather_config()
+
+    if not config.get("enabled", False):
+        return {"enabled": False, "hourly": [], "location": None}
+
+    now_utc = datetime.now(timezone.utc)
+    refresh_hours = float(config.get("refresh_interval_hours", 3))
+
+    # Zkontroluj platnost cache
+    cache = getattr(request.app.state, "weather_cache", None)
+    cache_time: datetime | None = getattr(request.app.state, "weather_cache_time", None)
+    if cache is not None and cache_time is not None:
+        age_hours = (now_utc - cache_time).total_seconds() / 3600
+        if age_hours < refresh_hours:
+            return cache
+
+    result = await _fetch_weather_data(config)
+    if "error" not in result:
+        request.app.state.weather_cache = result
+        request.app.state.weather_cache_time = now_utc
+    return result

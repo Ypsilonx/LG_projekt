@@ -13,7 +13,7 @@ FastAPI webová aplikace pro ovládání LG ThinQ klimatizací. Real-time MQTT p
 - **Ovládání klimatizace** – power, režimy (COOL/HEAT/FAN/AUTO/AIR_DRY), teplota se sliderem + debounce (°C krok), větrání; ovládání polohy lamel není podporováno ThinQ Connect API
 - **AUTO / HAND** – AUTO = sezónní pravidla + PID regulace; HAND = ruční ovládání + HAND scheduler
 - **HAND scheduler** – CRUD plánů: čas od/do, dny v týdnu, akce (mód/teplota/ventilátor), enable/disable
-- **ČHMÚ forecast** – meteogram POI 510, horizont 24 h, cache 3 h, fallback na region RPZL; widget s záložkami **Aktuální stav** (vítr, vlhkost, srážky, oblačnost) / **Předpověď** (denní min/max teplota) / **Hodinová** (scroll kartičky); směr větru `wind_dir_deg`
+- **ČHMÚ forecast** – meteogram POI 510, horizont 24 h, fallback na region RPZL; widget s záložkami **Aktuální stav** (vítr, vlhkost, srážky, oblačnost) / **Předpověď** (denní min/max teplota) / **Hodinová** (scroll kartičky); směr větru `wind_dir_deg`; data jsou **automaticky obnovována každou hodinu** background taskem `_weather_refresh_loop` – nezávisle na aktivním režimu (AUTO/HAND); první fetch proběhne okamžitě při startu serveru
 - **Sezónní automatika** – zima/přechod/léto, blokace COOL mimo léto, PID-like regulace cílové teploty
 - **Energy reporting** – den/týden/měsíc/rok, export CSV
 - **Docker** – `docker-compose up`, dostupné z domácí sítě, volitelný Cloudflare Tunnel

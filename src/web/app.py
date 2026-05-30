@@ -229,6 +229,43 @@ async def _scheduler_loop(app: FastAPI) -> None:
             logger.error("❌ Plánovač: chyba v hlavní smyčce: %s", exc)
 
 
+async def _weather_refresh_loop(app: FastAPI) -> None:
+    """
+    Pozadí smyčka pro periodickou aktualizaci předpovědi počasí z ČHMÚ.
+
+    Stahuje čerstvý forecast jednou za hodinu a ukládá výsledek do
+    ``app.state.weather_cache``. Běží nezávisle na ``control_mode`` –
+    data jsou aktuální vždy; automatika i manuální režim z nich čtou.
+
+    Při startu aplikace se první fetch provede okamžitě (bez úvodního
+    čekání), aby byla data dostupná ihned po spuštění serveru.
+
+    Args:
+        app: FastAPI aplikační instance (přístup k app.state).
+    """
+    from web.routes.weather import _fetch_weather_data, _load_weather_config
+
+    logger.info("🌤️ Weather refresh loop spuštěn")
+
+    while True:
+        try:
+            config = _load_weather_config()
+            if config.get("enabled", False):
+                result = await _fetch_weather_data(config)
+                if "error" not in result:
+                    app.state.weather_cache = result
+                    app.state.weather_cache_time = datetime.now(timezone.utc)
+                    logger.info("🌤️ Počasí aktualizováno z ČHMÚ meteogram")
+                else:
+                    logger.warning("⚠️ Počasí: aktualizace selhala – %s", result.get("error"))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("❌ Počasí: neočekávaná chyba v refresh loop: %s", exc)
+
+        await asyncio.sleep(3600)  # 1 hodina
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -317,17 +354,23 @@ async def lifespan(app: FastAPI):
     else:
         app.state.mqtt_connected = False
 
-    # Spustit plánovač jako background task
+    # Spustit background tasky
     scheduler_task = asyncio.create_task(_scheduler_loop(app))
+    weather_task = asyncio.create_task(_weather_refresh_loop(app))
 
     yield
 
     # --- Shutdown ---
     scheduler_task.cancel()
+    weather_task.cancel()
     try:
         await scheduler_task
     except asyncio.CancelledError:
         logger.info("⏰ Plánovač zastaven")
+    try:
+        await weather_task
+    except asyncio.CancelledError:
+        logger.info("🌤️ Weather refresh loop zastaven")
 
     api_instance: ThinQAPI | None = getattr(app.state, "api", None)
     if api_instance is not None:
