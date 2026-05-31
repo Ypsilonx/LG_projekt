@@ -2,8 +2,10 @@
 """
 Router: Počasí – GET /api/weather/forecast + GET /api/weather/config.
 
-Stahuje hodinová meteorologická data z ČHMÚ meteogram API a vrací
-strukturovaný forecast s teplotou, oblačností a srážkami.
+Stahuje hodinová meteorologická data z ČHMÚ meteogram API (model ALADIN)
+a vrací strukturovaný forecast. Každý bod obsahuje teplotu, oblačnost,
+srážky, vlhkost, rýchlost a směr větru, nárazy, tlak a ikonu počasí.
+Klíč ``current`` ukazuje na nejbližší (aktuální) hodinový bod.
 
 Výsledek je cachován v ``app.state.weather_cache`` po dobu nastavenou
 v ``automation_rules.json`` (výchozí: 3 hodiny).
@@ -24,6 +26,12 @@ router = APIRouter(prefix="/api/weather", tags=["Počasí"])
 _DATA_DIR = Path("data")
 _METEOGRAM_BASE = "https://data-provider.chmi.cz/api/graphs/graf.meteogram"
 
+# Soubor pro perzistenci poslední úspěšně stažené předpovědi. Umožňuje
+# zobrazit data ihned po restartu serveru (bez čekání na první fetch) a
+# slouží jako základ pro budoucí plánovací automatiku (24h plány dle
+# předpovědi). Přepisuje se při každé úspěšné aktualizaci.
+_CACHE_FILE = _DATA_DIR / "weather_cache.json"
+
 
 def _load_weather_config() -> dict:
     """
@@ -40,6 +48,56 @@ def _load_weather_config() -> dict:
         return rules.get("weather", {})
     except Exception:
         return {}
+
+
+def save_weather_cache(data: dict) -> None:
+    """
+    Uloží předpověď do ``data/weather_cache.json`` (atomický zápis).
+
+    Zapisuje se přes dočasný soubor a následný přejmenováním, aby při
+    pádu během zápisu nezůstal poškozený JSON. Volá se po každém úspěšném
+    stažení dat (background loop i HTTP endpoint).
+
+    Args:
+        data: Výsledek ``_fetch_weather_data`` (bez klíče ``error``).
+    """
+    try:
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _CACHE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(_CACHE_FILE)
+    except Exception as exc:
+        logger.warning("Nepodařilo se uložit weather cache: %s", exc)
+
+
+def load_weather_cache() -> tuple[dict | None, datetime | None]:
+    """
+    Načte poslední uloženou předpověď z ``data/weather_cache.json``.
+
+    Returns:
+        tuple: ``(data, fetched_at)`` – data předpovědi a čas jejich
+               stažení (UTC). Při chybějícím/poškozeném souboru nebo bez
+               platného ``fetched_at`` vrací ``(None, None)``.
+    """
+    if not _CACHE_FILE.exists():
+        return None, None
+    try:
+        data = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Nepodařilo se načíst weather cache: %s", exc)
+        return None, None
+
+    fetched_raw = data.get("fetched_at") if isinstance(data, dict) else None
+    fetched_at: datetime | None = None
+    if fetched_raw:
+        try:
+            fetched_at = datetime.fromisoformat(str(fetched_raw).replace("Z", "+00:00"))
+            if fetched_at.tzinfo is None:
+                fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            fetched_at = None
+    return data, fetched_at
+
 
 
 @router.get("/config", summary="Weather konfigurace")
@@ -114,13 +172,18 @@ async def _fetch_weather_data(config: dict) -> dict:
                 "temp_raw_c": round(float(t2m), 1),
             }
 
-            # Volitelná pole – přítomnost závisí na verzi API
+            # Volitelná číselná pole – mapování na skutečné klíče ČHMÚ
+            # meteogram API (model ALADIN). Hodnoty jsou předpověď daného
+            # modelu pro příslušnou hodinu.
             for src_key, dst_key in (
-                ("n", "cloudiness_pct"),
-                ("rr1h", "precip_mm_h"),
-                ("rh2m", "humidity_pct"),
-                ("ff10m", "wind_ms"),
-                ("dd", "wind_dir_deg"),   # směr větru ve stupních
+                ("cloudsTot", "cloudiness_pct"),    # celková oblačnost %
+                ("prec", "precip_mm_h"),            # celkové srážky mm/h
+                ("snow", "snow_mm_h"),              # sníh mm/h
+                ("rh2m", "humidity_pct"),           # relativní vlhkost %
+                ("windSpeed", "wind_ms"),           # rychlost větru m/s
+                ("windGustSpeed", "wind_gust_ms"),  # nárazy větru m/s
+                ("windDirection", "wind_dir_deg"),  # směr větru ve stupních
+                ("mslp", "pressure_hpa"),           # tlak přepočtený na hladinu moře hPa
             ):
                 val = row.get(src_key)
                 if val is not None:
@@ -128,6 +191,14 @@ async def _fetch_weather_data(config: dict) -> dict:
                         point[dst_key] = round(float(val), 1)
                     except (TypeError, ValueError):
                         pass
+
+            # Ikona počasí ČHMÚ (celé číslo) – ponecháváme bez zaokrouhlení
+            icon_val = row.get("icon")
+            if icon_val is not None:
+                try:
+                    point["icon"] = int(icon_val)
+                except (TypeError, ValueError):
+                    pass
 
             hourly.append(point)
 
@@ -170,6 +241,7 @@ async def _fetch_weather_data(config: dict) -> dict:
             "sensor_offset_c": sensor_offset,
             "horizon_hours": horizon_h,
             "fetched_at": now_utc.isoformat(),
+            "current": hourly[0] if hourly else None,
             "hourly": hourly,
             "daily": daily,
         }
@@ -182,6 +254,7 @@ async def _fetch_weather_data(config: dict) -> dict:
             "poi_id": poi_id,
             "fetched_at": None,
             "error": f"Nepodařilo se stáhnout data: {exc}",
+            "current": None,
             "hourly": [],
         }
     except Exception:
@@ -192,6 +265,7 @@ async def _fetch_weather_data(config: dict) -> dict:
             "poi_id": poi_id,
             "fetched_at": None,
             "error": "Interní chyba serveru",
+            "current": None,
             "hourly": [],
         }
 
@@ -234,4 +308,5 @@ async def get_weather_forecast(request: Request) -> dict:
     if "error" not in result:
         request.app.state.weather_cache = result
         request.app.state.weather_cache_time = now_utc
+        save_weather_cache(result)
     return result

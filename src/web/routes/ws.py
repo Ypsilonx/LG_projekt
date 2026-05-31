@@ -24,6 +24,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from web.auth import CloudflareAccessError, CloudflareAccessVerifier
+from web.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Real-time"])
@@ -105,6 +108,48 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Líně inicializovaný ověřovač Cloudflare Access (sdílený mezi WS spojeními).
+_ws_verifier: CloudflareAccessVerifier | None = None
+
+
+async def _authorize_ws(ws: WebSocket) -> bool:
+    """
+    Ověří Cloudflare Access token pro WebSocket spojení.
+
+    HTTP middleware na WebSocket upgrade nedosáhne, proto se token
+    (cookie ``CF_Authorization`` nebo hlavička ``Cf-Access-Jwt-Assertion``)
+    ověřuje přímo zde. Při ``auth_mode != "cloudflare"`` se propouští vše.
+
+    Args:
+        ws: Příchozí WebSocket spojení (před accept()).
+
+    Returns:
+        bool: True pokud je spojení autorizováno, jinak False.
+    """
+    global _ws_verifier
+    settings = get_settings()
+    if not settings.auth_is_cloudflare:
+        return True
+
+    if _ws_verifier is None:
+        _ws_verifier = CloudflareAccessVerifier(
+            settings.cf_team_domain, settings.cf_aud
+        )
+
+    token = ws.headers.get("Cf-Access-Jwt-Assertion") or ws.cookies.get(
+        "CF_Authorization"
+    )
+    if not token:
+        return False
+
+    try:
+        await _ws_verifier.verify(token)
+        return True
+    except CloudflareAccessError as exc:
+        logger.warning("WS: odmítnut neplatný Cloudflare Access token: %s", exc)
+        return False
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     """
@@ -120,6 +165,11 @@ async def websocket_endpoint(ws: WebSocket):
     Klient může posílat libovolný text (např. „ping") – server ho ignoruje
     a slouží jen pro udržení spojení naživu.
     """
+    if not await _authorize_ws(ws):
+        # 1008 = Policy Violation (klient neprošel autentizací)
+        await ws.close(code=1008)
+        return
+
     await manager.connect(ws)
     try:
         # Potvrzení připojení

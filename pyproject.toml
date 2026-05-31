@@ -21,6 +21,8 @@ dependencies = [
     "uvicorn[standard]>=0.34.3",
     "jinja2>=3.1.6",
     "python-multipart>=0.0.20",
+    # Ověřování Cloudflare Access JWT (RS256 využívá již přítomný cryptography)
+    "pyjwt>=2.8.0",
 ]
 
 [build-system]
@@ -30,4 +32,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # Zahrne pouze adresář src/ do wheel balíčku
 packages = ["src"]
+
+[tool.uv]
+# Cache UV a projektový .venv jsou na různých discích (C: vs D:),
+# proto hardlink selhává. Vynucením kopírování se umlčí varování
+# "Failed to hardlink files; falling back to full copy".
+link-mode = "copy"
 

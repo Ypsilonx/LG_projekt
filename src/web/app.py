@@ -25,7 +25,10 @@ from fastapi.templating import Jinja2Templates
 
 from command_executor import execute_plan
 from command_policy import build_command_plan
-from server_api import ThinQAPI
+from server_api import ThinQAPI, list_ac_device_ids
+from web.auth import CloudflareAccessMiddleware
+from web.ratelimit import RateLimitMiddleware
+from web.settings import get_settings
 from web.routes.devices import router as devices_router
 from web.routes.control import router as control_router
 from web.routes.ws import router as ws_router, manager as ws_manager
@@ -170,25 +173,17 @@ async def _scheduler_loop(app: FastAPI) -> None:
 
             device_ids = list(getattr(app.state, "known_device_ids", set()))
             if not device_ids:
-                # Záloha: načíst device IDs ze souboru devices.json
-                # (používá se pokud get_devices() selhalo při startu serveru)
-                _devices_file = BASE_DIR.parent.parent / "data" / "devices.json"
-                if _devices_file.exists():
-                    try:
-                        _devs = json.loads(_devices_file.read_text(encoding="utf-8"))
-                        device_ids = [
-                            d["deviceId"]
-                            for d in _devs
-                            if d.get("deviceId")
-                            and d.get("deviceInfo", {}).get("deviceType") == "DEVICE_AIR_CONDITIONER"
-                        ]
-                        if device_ids:
-                            logger.info(
-                                "⏰ Plánovač: known_device_ids prázdné, záloha ze souboru (%d AC)",
-                                len(device_ids),
-                            )
-                    except Exception as _exc:
-                        logger.warning("⏰ Plánovač: záloha devices.json selhala: %s", _exc)
+                # Záloha: pokud known_device_ids zůstalo prázdné (selhání API
+                # při startu), načteme klimatizace přímo z devices.json.
+                try:
+                    device_ids = list_ac_device_ids()
+                    if device_ids:
+                        logger.info(
+                            "⏰ Plánovač: known_device_ids prázdné, záloha ze souboru (%d AC)",
+                            len(device_ids),
+                        )
+                except Exception as _exc:
+                    logger.warning("⏰ Plánovač: záloha devices.json selhala: %s", _exc)
             if not device_ids:
                 continue
             device_id = next(iter(device_ids))
@@ -233,7 +228,8 @@ async def _weather_refresh_loop(app: FastAPI) -> None:
     """
     Pozadí smyčka pro periodickou aktualizaci předpovědi počasí z ČHMÚ.
 
-    Stahuje čerstvý forecast jednou za hodinu a ukládá výsledek do
+    Interval čerstvého stažení řídí ``weather.refresh_interval_hours``
+    z ``automation_rules.json`` (výchozí 3 hodiny). Výsledek se ukládá do
     ``app.state.weather_cache``. Běží nezávisle na ``control_mode`` –
     data jsou aktuální vždy; automatika i manuální režim z nich čtou.
 
@@ -243,19 +239,30 @@ async def _weather_refresh_loop(app: FastAPI) -> None:
     Args:
         app: FastAPI aplikační instance (přístup k app.state).
     """
-    from web.routes.weather import _fetch_weather_data, _load_weather_config
+    from web.routes.weather import (
+        _fetch_weather_data,
+        _load_weather_config,
+        save_weather_cache,
+    )
 
     logger.info("🌤️ Weather refresh loop spuštěn")
-
     while True:
+        # Výchozí interval pro případ, že je počasí vypnuté nebo nastane chyba
+        sleep_seconds = 3 * 3600
         try:
             config = _load_weather_config()
             if config.get("enabled", False):
+                interval_h = float(config.get("refresh_interval_hours", 3))
+                sleep_seconds = max(1.0, interval_h) * 3600
                 result = await _fetch_weather_data(config)
                 if "error" not in result:
                     app.state.weather_cache = result
                     app.state.weather_cache_time = datetime.now(timezone.utc)
-                    logger.info("🌤️ Počasí aktualizováno z ČHMÚ meteogram")
+                    save_weather_cache(result)
+                    logger.info(
+                        "🌤️ Počasí aktualizováno z ČHMÚ meteogram (další za %.0f h)",
+                        interval_h,
+                    )
                 else:
                     logger.warning("⚠️ Počasí: aktualizace selhala – %s", result.get("error"))
         except asyncio.CancelledError:
@@ -263,7 +270,7 @@ async def _weather_refresh_loop(app: FastAPI) -> None:
         except Exception as exc:
             logger.error("❌ Počasí: neočekávaná chyba v refresh loop: %s", exc)
 
-        await asyncio.sleep(3600)  # 1 hodina
+        await asyncio.sleep(sleep_seconds)
 
 
 @asynccontextmanager
@@ -283,12 +290,14 @@ async def lifespan(app: FastAPI):
         app.state.api = api
         app.state.api_error = None
         logger.info("✅ ThinQAPI inicializováno")
-        # Pre-cache device IDs pro MQTT topic parsing
+        # Pre-cache device IDs klimatizací pro MQTT topic parsing.
+        # Aplikace cílí výhradně na klimatizace – ostatní zařízení
+        # (lednice, pračka, ...) v devices.json záměrně ignorujeme.
         try:
-            devs = await api.get_devices()
-            app.state.known_device_ids = {
-                d.get("device_id", "") for d in devs if d.get("device_id")
-            }
+            app.state.known_device_ids = set(list_ac_device_ids())
+            logger.info(
+                "ℹ️ Sledováno %d klimatizací", len(app.state.known_device_ids)
+            )
         except Exception:
             app.state.known_device_ids = set()
     except Exception as exc:
@@ -299,13 +308,20 @@ async def lifespan(app: FastAPI):
 
     # Inicializace sdíleného in-memory stavu (mode se načítá z state.json)
     app.state.control_mode = _load_control_mode()
-    app.state.weather_cache = None
-    app.state.weather_cache_time = None
+
+    # Načti poslední uloženou předpověď z disku, aby byla data dostupná
+    # ihned po restartu serveru (bez čekání na první background fetch).
+    from web.routes.weather import load_weather_cache
+    cached, cached_time = load_weather_cache()
+    app.state.weather_cache = cached
+    app.state.weather_cache_time = cached_time
+    if cached is not None:
+        logger.info("🌤️ Načtena uložená předpověď z disku (weather_cache.json)")
 
     # --- MQTT bridge → WebSocket ---
     # Zachytíme aktuální asyncio smyčku, která bude použita pro
     # přechod z C++ vlákna AWS CRT SDK do asyncio (run_coroutine_threadsafe).
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _on_mqtt_message(topic, payload, dup, qos, retain, **kwargs):
         """
@@ -378,13 +394,32 @@ async def lifespan(app: FastAPI):
         logger.info("ThinQAPI session uzavřena")
 
 
+_settings = get_settings()
+
+if not _settings.auth_is_cloudflare:
+    logger.warning(
+        "⚠️ AUTENTIZACE VYPNUTA (LG_AUTH_MODE=%s). "
+        "Nevystavujte server na internet bez Cloudflare Access!",
+        _settings.auth_mode,
+    )
+
 app = FastAPI(
     title="LG Klimatizace",
     description="Webové rozhraní pro ovládání LG ThinQ klimatizace",
     version="1.0.0",
     lifespan=lifespan,
-    # Swagger UI dostupný na /docs, ReDoc na /redoc
+    # Swagger UI / ReDoc se v produkci vypne (LG_DOCS_ENABLED=false).
+    docs_url="/docs" if _settings.docs_enabled else None,
+    redoc_url="/redoc" if _settings.docs_enabled else None,
+    openapi_url="/openapi.json" if _settings.docs_enabled else None,
 )
+
+# --- Middleware ---
+# Pozor na pořadí: poslední přidaný middleware běží jako první (vnější obal).
+# Autentizaci chceme jako nejvnější vrstvu – odmítne neoprávněný provoz
+# dříve, než se vůbec dostane k rate limiteru či handlerům.
+app.add_middleware(RateLimitMiddleware, settings=_settings)
+app.add_middleware(CloudflareAccessMiddleware, settings=_settings)
 
 # Statické soubory (CSS, JS, obrázky)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")

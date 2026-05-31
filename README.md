@@ -14,7 +14,8 @@ FastAPI webová aplikace pro ovládání LG ThinQ klimatizací. Real-time MQTT p
 - **Ovládání klimatizace** – power, režimy (COOL/HEAT/FAN/AUTO/AIR_DRY), teplota se sliderem + debounce (°C krok), větrání; ovládání polohy lamel není podporováno ThinQ Connect API
 - **AUTO / HAND** – AUTO = sezónní pravidla + PID regulace; HAND = ruční ovládání + HAND scheduler
 - **HAND scheduler** – CRUD plánů: čas od/do, dny v týdnu, akce (mód/teplota/ventilátor), enable/disable
-- **ČHMÚ forecast** – meteogram POI 510, horizont 24 h, fallback na region RPZL; widget s záložkami **Aktuální stav** (vítr, vlhkost, srážky, oblačnost) / **Předpověď** (denní min/max teplota) / **Hodinová** (scroll kartičky); směr větru `wind_dir_deg`; data jsou **automaticky obnovována každou hodinu** background taskem `_weather_refresh_loop` – nezávisle na aktivním režimu (AUTO/HAND); první fetch proběhne okamžitě při startu serveru
+- **ČHMÚ forecast** – meteogram POI 510 (model ALADIN, asimiluje radar), horizont **72 h**, fallback na region RPZL; sjednocený **tmavý widget** na dashboardu i stránce automatizace: **vlevo aktuální počasí (vždy viditelné)** – velká ikona, teplota, slovní popis a detaily (vlhkost, oblačnost, srážky, vítr + směr `wind_dir_deg`, nárazy, tlak); **vpravo přepínací záložky Dny / Hodiny** – denní min/max teplota + srážky/oblačnost, hodinová předpověď s posuvníkem a horizontálním stripem podrobných kartiček; data jsou **automaticky obnovována** background taskem `_weather_refresh_loop` v intervalu `refresh_interval_hours` (výchozí **3 h**) – nezávisle na aktivním režimu (AUTO/HAND); první fetch proběhne okamžitě při startu serveru
+- **Perzistence počasí** – poslední úspěšně stažená předpověď se ukládá do `data/weather_cache.json` (atomický zápis, přepisuje se při každé aktualizaci); při startu serveru se načte z disku, takže počasí je vidět **okamžitě po restartu** bez čekání na první fetch (základ pro budoucí plánovací automatiku)
 - **Sezónní automatika** – zima/přechod/léto, blokace COOL mimo léto, PID-like regulace cílové teploty
 - **Energy reporting** – den/týden/měsíc/rok, export CSV
 - **Docker** – `docker-compose up`, dostupné z domácí sítě, volitelný Cloudflare Tunnel
@@ -52,7 +53,8 @@ data/                      # Docker volume (necommitovat config.json, devices.js
 ├── devices.json           # Seznam zařízení ⚠️
 ├── device_profile.json    # Profil zařízení
 ├── schedule.json          # Časové plány HAND scheduleru
-└── automation_rules.json  # Sezónní pravidla
+├── automation_rules.json  # Sezónní pravidla + weather (POI, offset, interval, horizont)
+└── weather_cache.json     # Poslední stažená předpověď ČHMÚ (autogenerovaná, necommitovat)
 
 Dockerfile                 # python:3.12-slim, non-root uid 1000
 docker-compose.yml         # lg-klimatizace + cloudflared (volitelné)
@@ -189,7 +191,8 @@ docker-compose logs -f lg-klimatizace
 | `data/*.example` | `data/config.json` |
 | `src/`, `Dockerfile` | `data/devices.json` |
 | `docker-compose.yml` | `data/schedule.json` |
-| `pyproject.toml`, `uv.lock` | `.venv/` |
+| `pyproject.toml`, `uv.lock` | `data/weather_cache.json` |
+| | `.venv/` |
 
 - Token Cloudflare Tunnel ukládejte jako systémovou proměnnou (`CLOUDFLARE_TUNNEL_TOKEN`), nikdy do souborů.
 - Rotujte API klíče pravidelně.

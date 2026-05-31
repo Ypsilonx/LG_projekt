@@ -42,29 +42,55 @@ class ThinQAPI:
 
     def _load_config(self) -> dict:
         """
-        Načte konfiguraci z data/config.json.
+        Načte konfiguraci přihlašovacích údajů ThinQ.
+
+        Pořadí priorit (vyšší přepisuje nižší):
+            1. Proměnné prostředí ``LG_ACCESS_TOKEN``, ``LG_COUNTRY_CODE``,
+               ``LG_CLIENT_ID`` – preferováno pro produkci / Docker secrets.
+            2. Soubor ``data/config.json`` – vhodné pro lokální vývoj.
 
         Returns:
             dict: Konfigurační data (access_token, country_code, client_id)
 
         Raises:
-            FileNotFoundError: Pokud config.json neexistuje
-            KeyError: Pokud chybí povinný klíč
+            FileNotFoundError: Pokud chybí env i config.json
+            ValueError: Pokud je některá povinná hodnota prázdná nebo placeholder
         """
+        import os
+
+        config: dict = {}
+
         config_path = Path(__file__).parent.parent / "data" / "config.json"
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-        except FileNotFoundError:
+        if config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Nelze načíst config.json (%s); zkusím env.", exc)
+
+        # Proměnné prostředí mají přednost (Docker secrets, .env).
+        env_map = {
+            "access_token": os.getenv("LG_ACCESS_TOKEN"),
+            "country_code": os.getenv("LG_COUNTRY_CODE"),
+            "client_id": os.getenv("LG_CLIENT_ID"),
+        }
+        for key, value in env_map.items():
+            if value:
+                config[key] = value
+
+        if not config:
             raise FileNotFoundError(
-                f"Konfigurační soubor {config_path} nenalezen. "
-                "Zkopírujte data/config.json.example a vyplňte přihlašovací údaje."
+                f"Konfigurace nenalezena: chybí proměnné prostředí i {config_path}. "
+                "Zkopírujte data/config.json.example a vyplňte přihlašovací údaje, "
+                "nebo nastavte LG_ACCESS_TOKEN, LG_COUNTRY_CODE a LG_CLIENT_ID."
             )
 
         for key in ("access_token", "country_code", "client_id"):
-            if not config.get(key) or config[key].startswith("YOUR_"):
+            value = config.get(key)
+            if not value or str(value).startswith("YOUR_"):
                 raise ValueError(
-                    f"Chybí nebo nevyplněná hodnota '{key}' v config.json."
+                    f"Chybí nebo nevyplněná hodnota '{key}' "
+                    "(env proměnná nebo config.json)."
                 )
         return config
 
@@ -637,6 +663,24 @@ def get_ac_device_id() -> str:
     raise ValueError(
         "Klimatizace (DEVICE_AIR_CONDITIONER/AIR_CONDITIONER) nebyla nalezena v devices.json."
     )
+
+
+def list_ac_device_ids() -> list[str]:
+    """
+    Vrátí Device ID všech klimatizací z data/devices.json.
+
+    Aplikace i plánovač cílí výhradně na klimatizace; ostatní typy
+    zařízení (lednice, pračka, ...) jsou v devices.json pouze jako
+    příprava pro budoucí rozšíření a tato funkce je vynechává.
+
+    Returns:
+        list[str]: Seznam Device ID typu klimatizace (může být prázdný).
+    """
+    return [
+        device["device_id"]
+        for device in list_devices()
+        if _is_air_conditioner(device.get("device_type")) and device.get("device_id")
+    ]
 
 
 # ------------------------------------------------------------------

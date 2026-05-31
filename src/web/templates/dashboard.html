@@ -93,167 +93,174 @@
     <!-- ═══════════════════════════════════════════════════════
          POČASÍ
     ════════════════════════════════════════════════════════ -->
-    <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden mb-5">
+    <div class="bg-gray-800 border border-gray-700 rounded-xl p-5 mb-5">
 
-        <!-- Hlavička: lokace + aktuální teplota + ikona -->
-        <div class="bg-gradient-to-r from-blue-950/80 to-indigo-950/80 px-4 py-3
-                    flex items-center justify-between">
+        <!-- Hlavička: lokace + zdroj + obnovit -->
+        <div class="flex items-center justify-between mb-4">
             <div>
                 <div class="text-sm font-semibold text-gray-100"
                      x-text="weatherConfig.chmi_location_label || 'Počasí'"></div>
-                <div class="text-xs text-blue-400/70">ČHMÚ</div>
+                <div class="text-xs text-gray-500" x-text="weatherSubtitle"></div>
             </div>
-            <div class="flex items-center gap-3">
-                <template x-if="currentWeather">
-                    <div class="flex items-center gap-2">
-                        <span class="text-2xl" x-text="weatherIcon(currentWeather.cloudiness_pct)"></span>
-                        <span class="text-3xl font-black text-white tabular-nums"
-                              x-text="currentWeather.temp_c + '°C'"></span>
-                    </div>
-                </template>
-                <button @click="loadForecast()" :disabled="loadingForecast"
-                        class="text-blue-400 hover:text-blue-300 disabled:opacity-40 transition-colors"
-                        title="Obnovit data">🔄</button>
-            </div>
+            <button @click="loadForecast()" :disabled="loadingForecast"
+                    class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 transition-colors font-medium">
+                🔄 Obnovit
+            </button>
         </div>
 
-        <!-- Záložky -->
-        <div class="flex border-b border-gray-700 text-xs font-medium">
-            <button @click="weatherTab = 'current'"
-                    :class="weatherTab === 'current'
-                        ? 'border-b-2 border-blue-500 text-blue-400'
-                        : 'text-gray-500 hover:text-gray-300'"
-                    class="flex-1 py-2.5 text-center transition-colors">Aktuální stav</button>
-            <button @click="weatherTab = 'forecast'"
-                    :class="weatherTab === 'forecast'
-                        ? 'border-b-2 border-blue-500 text-blue-400'
-                        : 'text-gray-500 hover:text-gray-300'"
-                    class="flex-1 py-2.5 text-center transition-colors">Předpověď</button>
-            <button @click="weatherTab = 'hourly'"
-                    :class="weatherTab === 'hourly'
-                        ? 'border-b-2 border-blue-500 text-blue-400'
-                        : 'text-gray-500 hover:text-gray-300'"
-                    class="flex-1 py-2.5 text-center transition-colors">Hodinová</button>
+        <!-- Skeleton -->
+        <div x-show="loadingForecast" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div class="h-56 bg-gray-700 rounded-xl animate-pulse"></div>
+            <div class="lg:col-span-2 h-56 bg-gray-700 rounded-xl animate-pulse"></div>
         </div>
 
-        <!-- Obsah záložek -->
-        <div class="p-4">
+        <!-- Chyba -->
+        <div x-show="!loadingForecast && forecastError"
+             class="py-8 text-center text-sm text-red-400" x-text="forecastError"></div>
 
-            <!-- Skeleton -->
-            <div x-show="loadingForecast" class="grid grid-cols-2 gap-3">
-                <template x-for="i in 4" :key="i">
-                    <div class="h-20 bg-gray-700 rounded-xl animate-pulse"></div>
-                </template>
-            </div>
+        <!-- Bez dat -->
+        <div x-show="!loadingForecast && !forecastError && hourly.length === 0"
+             class="py-8 text-center text-sm text-gray-600">
+            <div class="text-3xl mb-2">🌥️</div>
+            Data nejsou dostupná.
+        </div>
 
-            <!-- Chyba -->
-            <div x-show="!loadingForecast && forecastError"
-                 class="py-8 text-center text-sm text-red-400" x-text="forecastError"></div>
+        <!-- Hlavní rozložení: vlevo aktuální (vždy), vpravo přepínací předpověď -->
+        <div x-show="!loadingForecast && !forecastError && hourly.length > 0"
+             class="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-            <!-- ── Aktuální stav ── -->
-            <div x-show="!loadingForecast && !forecastError && weatherTab === 'current'">
-                <template x-if="currentWeather">
-                    <div class="grid grid-cols-2 gap-3">
-                        <!-- Vítr -->
-                        <div class="bg-gray-900/60 rounded-xl p-3">
-                            <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Vítr</div>
-                            <div class="text-lg font-bold text-gray-100"
-                                 x-text="currentWeather.wind_ms !== undefined ? currentWeather.wind_ms + ' m/s' : '—'"></div>
-                            <div class="text-xs text-gray-500 mt-0.5"
-                                 x-text="currentWeather.wind_dir_deg !== undefined ? windDirLabel(currentWeather.wind_dir_deg) : 'Směr neznámý'"></div>
-                        </div>
-                        <!-- Vlhkost -->
-                        <div class="bg-gray-900/60 rounded-xl p-3">
-                            <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Vlhkost</div>
-                            <div class="text-lg font-bold text-gray-100"
-                                 x-text="currentWeather.humidity_pct !== undefined ? currentWeather.humidity_pct + ' %' : '—'"></div>
-                            <div class="text-xs mt-0.5"
-                                 :class="currentWeather.humidity_pct < 40 ? 'text-yellow-500'
-                                       : currentWeather.humidity_pct > 70 ? 'text-blue-400'
-                                       : 'text-green-500/80'"
-                                 x-text="currentWeather.humidity_pct < 40 ? 'Nízká'
-                                       : currentWeather.humidity_pct > 70 ? 'Vysoká' : 'Příznivá'"></div>
-                        </div>
-                        <!-- Srážky -->
-                        <div class="bg-gray-900/60 rounded-xl p-3">
-                            <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Srážky</div>
-                            <div class="text-lg font-bold text-gray-100"
-                                 x-text="currentWeather.precip_mm_h !== undefined ? currentWeather.precip_mm_h + ' mm/h' : '—'"></div>
-                            <div class="text-xs text-gray-500 mt-0.5">Za hodinu</div>
-                        </div>
-                        <!-- Oblačnost -->
-                        <div class="bg-gray-900/60 rounded-xl p-3">
-                            <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Oblačnost</div>
-                            <div class="text-lg font-bold text-gray-100"
-                                 x-text="currentWeather.cloudiness_pct !== undefined ? currentWeather.cloudiness_pct + ' %' : '—'"></div>
-                            <div class="text-xs text-gray-500 mt-0.5"
-                                 x-text="weatherDesc(currentWeather.cloudiness_pct)"></div>
-                        </div>
+            <!-- LEVÝ sloupec: aktuální počasí – vždy viditelné -->
+            <div class="bg-gradient-to-br from-blue-950/60 to-indigo-950/60 border border-gray-700 rounded-xl p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="text-xs font-semibold text-blue-400 uppercase tracking-wider">Aktuální počasí</div>
+                    <div class="text-xs text-gray-500"
+                         x-text="currentWeather && currentWeather.time_label ? ('k ' + currentWeather.time_label) : ''"></div>
+                </div>
+
+                <!-- Velká ikona + teplota -->
+                <div class="flex items-center gap-4 mb-4">
+                    <div class="text-5xl leading-none" x-text="currentWeather ? weatherEmoji(currentWeather) : '🌡️'"></div>
+                    <div>
+                        <div class="text-3xl font-black text-white tabular-nums"
+                             x-text="currentWeather ? currentWeather.temp_c + '°C' : '—'"></div>
+                        <div class="text-xs text-gray-400" x-text="currentWeather ? weatherLabel(currentWeather) : ''"></div>
                     </div>
-                </template>
-                <div x-show="!currentWeather" class="py-8 text-center text-sm text-gray-600">
-                    Data nejsou dostupná.
+                </div>
+
+                <!-- Detailní metriky -->
+                <div class="space-y-1.5 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">💧 Vlhkost</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="currentWeather && currentWeather.humidity_pct != null ? currentWeather.humidity_pct + '%' : '—'"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">☁️ Oblačnost</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="currentWeather && currentWeather.cloudiness_pct != null ? currentWeather.cloudiness_pct + '%' : '—'"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">🌧️ Srážky</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="currentWeather && currentWeather.precip_mm_h != null ? currentWeather.precip_mm_h + ' mm/h' : '—'"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">💨 Vítr</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="currentWeather && currentWeather.wind_ms != null ? (currentWeather.wind_ms + ' m/s ' + windDirLabel(currentWeather.wind_dir_deg)) : '—'"></span>
+                    </div>
+                    <div class="flex justify-between" x-show="currentWeather && currentWeather.wind_gust_ms">
+                        <span class="text-gray-500">🌬️ Nárazy</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="currentWeather ? currentWeather.wind_gust_ms + ' m/s' : '—'"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">🔵 Tlak</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="currentWeather && currentWeather.pressure_hpa != null ? currentWeather.pressure_hpa + ' hPa' : '—'"></span>
+                    </div>
+                </div>
+
+                <div class="mt-3 pt-3 border-t border-gray-700/60 text-xs text-gray-500 flex justify-between">
+                    <span>Korekce čidla AC</span>
+                    <span class="font-semibold text-gray-400"
+                          x-text="(weatherConfig.sensor_offset_c >= 0 ? '+' : '') + (weatherConfig.sensor_offset_c ?? 0) + '°C'"></span>
                 </div>
             </div>
 
-            <!-- ── Denní předpověď ── -->
-            <div x-show="!loadingForecast && !forecastError && weatherTab === 'forecast'">
-                <template x-if="daily.length">
-                    <div class="space-y-2">
-                        <template x-for="(d, idx) in daily" :key="d.date_label">
-                            <div class="flex items-center gap-3 p-2.5 bg-gray-900/60 rounded-xl">
-                                <span class="text-sm font-medium text-gray-300 w-20 flex-shrink-0"
-                                      x-text="idx === 0 ? 'Dnes' : (idx === 1 ? 'Zítra' : d.day_name)"></span>
-                                <span class="text-xl flex-shrink-0" x-text="weatherIcon(d.avg_cloudiness_pct)"></span>
-                                <span class="text-xs flex-1"
-                                      :class="d.total_precip_mm > 0 ? 'text-blue-400' : 'text-gray-600'"
-                                      x-text="d.total_precip_mm > 0 ? d.total_precip_mm + ' mm' : '0 mm'"></span>
-                                <span class="text-sm font-bold tabular-nums"
-                                      :class="tempColor(d.max_temp_c)"
-                                      x-text="d.min_temp_c + ' / ' + d.max_temp_c + '°C'"></span>
+            <!-- PRAVÝ sloupec: přepínací předpověď (Dny / Hodiny) -->
+            <div class="lg:col-span-2">
+                <!-- Záložky -->
+                <div class="flex gap-2 mb-4">
+                    <button @click="weatherTab='days'"
+                            :class="weatherTab==='days' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                            class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">📅 Dny</button>
+                    <button @click="weatherTab='hours'"
+                            :class="weatherTab==='hours' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                            class="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">🕐 Hodiny</button>
+                </div>
+
+                <!-- DNY -->
+                <div x-show="weatherTab==='days'" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <template x-for="(d, idx) in daily" :key="d.date_label">
+                        <div class="bg-gray-900/60 rounded-xl p-3 text-center">
+                            <div class="text-xs font-semibold text-gray-300"
+                                 x-text="idx === 0 ? 'Dnes' : (idx === 1 ? 'Zítra' : d.day_name)"></div>
+                            <div class="text-[11px] text-gray-500" x-text="d.date_label"></div>
+                            <div class="text-3xl my-1" x-text="dayEmoji(d)"></div>
+                            <div class="text-sm tabular-nums">
+                                <span class="font-bold text-red-400" x-text="d.max_temp_c + '°'"></span>
+                                <span class="text-gray-600">/</span>
+                                <span class="font-bold text-blue-400" x-text="d.min_temp_c + '°'"></span>
                             </div>
-                        </template>
-                    </div>
-                </template>
-                <div x-show="!daily.length" class="py-8 text-center text-sm text-gray-600">
-                    Předpověď není dostupná.
-                </div>
-            </div>
-
-            <!-- ── Hodinová předpověď ── -->
-            <div x-show="!loadingForecast && !forecastError && weatherTab === 'hourly'">
-                <div x-show="hourly.length"
-                     class="flex gap-2 overflow-x-auto pb-1"
-                     style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
-                    <template x-for="(h, idx) in hourly" :key="h.time_utc || h.time_label">
-                        <div class="flex-shrink-0 w-[4.5rem] bg-gray-900/70 border border-gray-700/60
-                                    rounded-lg p-2 text-center">
-                            <div x-show="idx > 0 && hourly[idx-1] && hourly[idx-1].date_label !== h.date_label"
-                                 class="text-xs text-yellow-600/80 leading-tight -mt-0.5 mb-0.5"
-                                 x-text="h.date_label"></div>
-                            <div class="text-xs text-gray-400 font-medium leading-tight"
-                                 :class="(idx > 0 && hourly[idx-1] && hourly[idx-1].date_label !== h.date_label) ? '' : 'mb-1.5'"
-                                 x-text="h.time_label"></div>
-                            <div class="text-sm font-bold tabular-nums"
-                                 :class="tempColor(h.temp_c)"
-                                 x-text="h.temp_c + '°'"></div>
-                            <div x-show="h.humidity_pct !== undefined"
-                                 class="text-xs text-indigo-300 mt-1 leading-tight"
-                                 x-text="'💧 ' + h.humidity_pct + '%'"></div>
+                            <div class="mt-1 text-[11px] text-gray-500 space-y-0.5">
+                                <div x-show="d.total_precip_mm > 0">🌧️ <span x-text="d.total_precip_mm + ' mm'"></span></div>
+                                <div x-show="d.avg_cloudiness_pct != null">☁️ <span x-text="d.avg_cloudiness_pct + '%'"></span></div>
+                            </div>
                         </div>
                     </template>
                 </div>
-                <div x-show="!hourly.length" class="py-8 text-center text-sm text-gray-600">
-                    Hodinová předpověď není dostupná.
+
+                <!-- HODINY -->
+                <div x-show="weatherTab==='hours'">
+                    <!-- Posuvník: od aktuální hodiny po poslední dostupná data -->
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="text-xs text-gray-500 whitespace-nowrap"
+                              x-text="hourly.length ? hourly[hourIndex].date_label + ' ' + hourly[hourIndex].time_label : ''"></span>
+                        <input type="range" min="0" :max="Math.max(0, hourly.length - 1)"
+                               x-model.number="hourIndex" @input="scrollHours()"
+                               class="flex-1 accent-blue-500">
+                        <span class="text-xs text-gray-500 whitespace-nowrap"
+                              x-text="hourly.length ? '… ' + hourly[hourly.length-1].date_label : ''"></span>
+                    </div>
+
+                    <!-- Horizontální strip podrobných hodinových kartiček -->
+                    <div x-ref="hourStrip" class="flex gap-2 overflow-x-auto pb-2 scroll-smooth"
+                         style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
+                        <template x-for="(h, i) in hourly" :key="h.time_utc">
+                            <div :class="i===hourIndex ? 'ring-2 ring-blue-500 bg-gray-900' : 'bg-gray-900/60'"
+                                 class="flex-shrink-0 w-24 rounded-lg p-2 text-center transition">
+                                <div class="text-[11px] text-yellow-600/80" x-text="h.date_label"></div>
+                                <div class="text-xs font-semibold text-gray-300" x-text="h.time_label"></div>
+                                <div class="text-2xl my-1" x-text="weatherEmoji(h)"></div>
+                                <div class="font-bold text-blue-400 text-sm tabular-nums" x-text="h.temp_c + '°C'"></div>
+                                <div class="mt-1.5 space-y-0.5 text-[10px] text-gray-400 text-left">
+                                    <div x-show="h.humidity_pct != null">💧 <span x-text="h.humidity_pct + '%'"></span></div>
+                                    <div x-show="h.cloudiness_pct != null">☁️ <span x-text="h.cloudiness_pct + '%'"></span></div>
+                                    <div x-show="h.precip_mm_h">🌧️ <span x-text="h.precip_mm_h + ' mm'"></span></div>
+                                    <div x-show="h.wind_ms != null">💨 <span x-text="h.wind_ms + ' m/s ' + windDirLabel(h.wind_dir_deg)"></span></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
                 </div>
             </div>
-
         </div>
 
         <!-- Patička -->
         <div x-show="weatherSubtitle && !loadingForecast"
-             class="px-4 py-2 border-t border-gray-700/60 text-xs text-gray-600 text-center"
-             x-text="'Zdroj: ČHMÚ · ' + weatherSubtitle"></div>
+             class="mt-3 pt-2 border-t border-gray-700/60 text-xs text-gray-600 text-center"
+             x-text="'Zdroj: ČHMÚ ALADIN'"></div>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════
@@ -948,7 +955,8 @@ document.addEventListener('alpine:init', () => {
         // ── Počasí ────────────────────────────────────────────────────
         showTemp:       true,
         showHumidity:   true,
-        weatherTab:     'current',  // 'current' | 'forecast' | 'hourly'
+        weatherTab:     'days',     // 'days' | 'hours'
+        hourIndex:      0,          // vybraná hodina v posuvníku
         daily:          [],         // denní agregáty z /api/weather/forecast
 
         // ── Teplotní limity z device profilu ───────────────────────
@@ -1200,6 +1208,7 @@ document.addEventListener('alpine:init', () => {
                 else {
                     this.hourly        = d.hourly || [];
                     this.daily         = d.daily  || [];
+                    this.hourIndex     = 0;
                     this.weatherConfig = { ...this.weatherConfig, ...d };
                 }
             } catch (e) {
@@ -1476,6 +1485,70 @@ document.addEventListener('alpine:init', () => {
             if (pct < 70) return 'Polojasno';
             if (pct < 90) return 'Oblačno';
             return 'Zataženo';
+        },
+
+        /**
+         * Vrátí emoji ikonu počasí pro hodinový/aktuální bod – zohledňuje
+         * sníh, srážky i oblačnost (priorita: sníh > déšť > oblačnost).
+         * @param {object} p - Bod předpovědi (snow_mm_h, precip_mm_h, cloudiness_pct).
+         * @returns {string} Emoji ikona počasí.
+         */
+        weatherEmoji(p) {
+            if (!p) return '🌡️';
+            if (p.snow_mm_h > 0) return '🌨️';
+            if (p.precip_mm_h >= 2) return '🌧️';
+            if (p.precip_mm_h > 0) return '🌦️';
+            const c = p.cloudiness_pct;
+            if (c == null) return '🌡️';
+            if (c < 20) return '☀️';
+            if (c < 50) return '🌤️';
+            if (c < 85) return '⛅';
+            return '☁️';
+        },
+
+        /**
+         * Vrátí slovní popis počasí pro hodinový/aktuální bod.
+         * @param {object} p - Bod předpovědi (snow_mm_h, precip_mm_h, cloudiness_pct).
+         * @returns {string} Slovní popis počasí.
+         */
+        weatherLabel(p) {
+            if (!p) return '—';
+            if (p.snow_mm_h > 0) return 'Sněžení';
+            if (p.precip_mm_h >= 2) return 'Déšť';
+            if (p.precip_mm_h > 0) return 'Slabý déšť';
+            const c = p.cloudiness_pct;
+            if (c == null) return '—';
+            if (c < 20) return 'Jasno';
+            if (c < 50) return 'Skoro jasno';
+            if (c < 85) return 'Polojasno';
+            return 'Zataženo';
+        },
+
+        /**
+         * Vrátí emoji pro denní agregát (dle průměrné oblačnosti a srážek).
+         * @param {object} d - Denní agregát (total_precip_mm, avg_cloudiness_pct).
+         * @returns {string} Emoji ikona dne.
+         */
+        dayEmoji(d) {
+            if (!d) return '🌡️';
+            return this.weatherEmoji({
+                snow_mm_h: 0,
+                precip_mm_h: d.total_precip_mm > 1 ? 2 : 0,
+                cloudiness_pct: d.avg_cloudiness_pct,
+            });
+        },
+
+        /**
+         * Posune horizontální strip hodin tak, aby byla vybraná hodina
+         * (hourIndex) vycentrovaná. Volá se z posuvníku.
+         */
+        scrollHours() {
+            this.$nextTick(() => {
+                const strip = this.$refs.hourStrip;
+                if (!strip) return;
+                const card = strip.children[this.hourIndex];
+                if (card) card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            });
         },
 
         formatDays(days) {

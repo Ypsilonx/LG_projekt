@@ -57,8 +57,10 @@ def run_web():
     """
     Spustí webový server (FastAPI + uvicorn).
 
-    Server naslouchá na 0.0.0.0:8000, takže je dostupný z celé sítě.
-    V Docker kontejneru je port namapován přes docker-compose.yml.
+    Konfigurace (host, port, úroveň logů, reload, důvěryhodné proxy IP) se
+    čte z proměnných prostředí přes ``web.settings.get_settings``. Díky
+    ``proxy_headers`` a ``forwarded_allow_ips`` server správně rozpozná
+    skutečnou IP klienta i za reverzní proxy (Cloudflare Tunnel, nginx).
     """
     try:
         import uvicorn
@@ -67,19 +69,32 @@ def run_web():
         sys.exit(1)
 
     import logging
+    from web.settings import get_settings
+
+    settings = get_settings()
+
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-8s %(name)s – %(message)s",
         datefmt="%H:%M:%S",
     )
 
-    host = "0.0.0.0"
-    port = 8000
-    print(f"Spouštím webový server – http://{host}:{port}")
-    print("Swagger API docs: http://localhost:8000/docs")
+    print(f"Spouštím webový server – http://{settings.host}:{settings.port}")
+    if settings.docs_enabled:
+        print(f"Swagger API docs: http://localhost:{settings.port}/docs")
     # Předáváme string 'web.app:app' – src/ je v sys.path (přidáno výše v main.py),
     # takže uvicorn najde modul web/app.py správně.
-    uvicorn.run("web.app:app", host=host, port=port, reload=False)
+    # proxy_headers + forwarded_allow_ips: za reverzní proxy se použije
+    # skutečná IP klienta z X-Forwarded-For (nutné pro logy i rate limiting).
+    uvicorn.run(
+        "web.app:app",
+        host=settings.host,
+        port=settings.port,
+        reload=settings.reload,
+        log_level=settings.log_level,
+        proxy_headers=True,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
+    )
 
 
 def run_cli():

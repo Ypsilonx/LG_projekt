@@ -1,26 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Automatizace – LG Klimatizace{% endblock %}
 
-{% block head_extra %}
-<!-- Chart.js – pouze na stránce s grafem předpovědi -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-{% endblock %}
-
 {% block content %}
 <div x-data="automationPage" x-init="init()">
 
     <!-- ── Nadpis ── -->
     <div class="mb-6">
-        <h1 class="text-2xl font-bold text-slate-800">Automatizace</h1>
-        <p class="text-slate-500 text-sm mt-1">Přepínač HAND/AUTO a předpověď počasí pro inteligentní řízení</p>
+        <h1 class="text-2xl font-bold text-gray-100">Automatizace</h1>
+        <p class="text-gray-400 text-sm mt-1">Přepínač HAND/AUTO a předpověď počasí pro inteligentní řízení</p>
     </div>
 
     <!-- ── HAND/AUTO karta ── -->
-    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+    <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 mb-6">
         <div class="flex items-start justify-between gap-4">
             <div class="flex-1">
-                <h2 class="font-semibold text-slate-800 text-lg mb-1">Režim řízení</h2>
-                <p class="text-slate-500 text-sm">
+                <h2 class="font-semibold text-gray-100 text-lg mb-1">Režim řízení</h2>
+                <p class="text-gray-400 text-sm">
                     <span x-show="controlMode === 'AUTO'">
                         🤖 <strong>AUTO</strong> – systém smí automaticky reagovat na pravidla a předpověď počasí.
                     </span>
@@ -44,82 +39,197 @@
 
         <!-- Info řádek -->
         <div class="mt-5 grid grid-cols-3 gap-4 text-center">
-            <div class="bg-slate-50 rounded-lg p-3">
-                <div class="text-xs text-slate-400 mb-1">Stav</div>
-                <div :class="controlMode === 'AUTO' ? 'text-emerald-600' : 'text-amber-600'"
+            <div class="bg-gray-900/60 rounded-lg p-3">
+                <div class="text-xs text-gray-500 mb-1">Stav</div>
+                <div :class="controlMode === 'AUTO' ? 'text-emerald-400' : 'text-amber-400'"
                      class="font-bold text-sm"
                      x-text="controlMode === 'AUTO' ? 'Aktivní' : 'Pozastaveno'">
                 </div>
             </div>
-            <div class="bg-slate-50 rounded-lg p-3">
-                <div class="text-xs text-slate-400 mb-1">Zdroj dat</div>
-                <div class="font-medium text-slate-600 text-sm"
+            <div class="bg-gray-900/60 rounded-lg p-3">
+                <div class="text-xs text-gray-500 mb-1">Zdroj dat</div>
+                <div class="font-medium text-gray-300 text-sm"
                      x-text="weatherConfig.provider || 'CHMI_METEOGRAM'"></div>
             </div>
-            <div class="bg-slate-50 rounded-lg p-3">
-                <div class="text-xs text-slate-400 mb-1">Lokalita</div>
-                <div class="font-medium text-slate-600 text-sm"
+            <div class="bg-gray-900/60 rounded-lg p-3">
+                <div class="text-xs text-gray-500 mb-1">Lokalita</div>
+                <div class="font-medium text-gray-300 text-sm"
                      x-text="weatherConfig.chmi_location_label || '–'"></div>
             </div>
         </div>
     </div>
 
     <!-- ── Předpověď počasí ── -->
-    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+    <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 mb-6">
         <div class="flex items-center justify-between mb-4">
             <div>
-                <h2 class="font-semibold text-slate-800 text-lg">Předpověď počasí</h2>
-                <p class="text-slate-500 text-sm" x-text="forecastSubtitle"></p>
+                <h2 class="font-semibold text-gray-100 text-lg">Předpověď počasí</h2>
+                <p class="text-gray-400 text-sm" x-text="forecastSubtitle"></p>
             </div>
             <button @click="loadForecast()" :disabled="loadingForecast"
-                    class="text-xs text-brand hover:underline disabled:opacity-40 font-medium">
+                    class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 font-medium">
                 🔄 Obnovit
             </button>
         </div>
 
         <!-- Chyba -->
         <div x-show="forecastError"
-             class="bg-red-50 border border-red-200 rounded-lg p-4 text-center text-sm text-red-700 mb-4">
+             class="bg-red-950/40 border border-red-800/60 rounded-lg p-4 text-center text-sm text-red-300 mb-4">
             <span x-text="forecastError"></span>
         </div>
 
         <!-- Načítám -->
         <div x-show="loadingForecast && !forecastError"
-             class="h-64 bg-slate-50 rounded-lg animate-pulse flex items-center justify-center text-slate-400 text-sm">
+             class="h-64 bg-gray-700 rounded-lg animate-pulse flex items-center justify-center text-gray-400 text-sm">
             Stahuji data z ČHMÚ…
-        </div>
-
-        <!-- Graf -->
-        <div x-show="!loadingForecast && hourly.length > 0" style="position:relative; height:280px">
-            <canvas x-ref="chart"></canvas>
         </div>
 
         <!-- Vypnuto / bez dat -->
         <div x-show="!loadingForecast && !forecastError && hourly.length === 0"
-             class="py-10 text-center text-slate-400 text-sm">
+             class="py-10 text-center text-gray-500 text-sm">
             <div class="text-3xl mb-2">🌥️</div>
             <div x-show="weatherConfig.enabled === false">
                 Předpověď počasí není aktivována.<br>
-                <code class="text-xs bg-slate-100 px-2 py-0.5 rounded mt-1 inline-block">weather.enabled = true</code>
+                <code class="text-xs bg-gray-900 text-gray-300 px-2 py-0.5 rounded mt-1 inline-block">weather.enabled = true</code>
                 v automation_rules.json
             </div>
             <div x-show="weatherConfig.enabled !== false">Žádná data pro zvolenou lokalitu.</div>
         </div>
 
-        <!-- Souhrnné statistiky -->
-        <div x-show="hourly.length > 0" class="mt-5 grid grid-cols-3 gap-4 text-center">
-            <div class="bg-blue-50 rounded-lg p-3">
-                <div class="text-xs text-slate-400 mb-1">Minimum</div>
-                <div class="font-bold text-blue-600 text-lg" x-text="minTemp + '°C'"></div>
+        <!-- Hlavní rozložení: vlevo aktuální stav (vždy), vpravo přepínací předpověď -->
+        <div x-show="!loadingForecast && !forecastError && hourly.length > 0"
+             class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+            <!-- LEVÝ sloupec: aktuální počasí – kompaktní, stále viditelné -->
+            <div class="bg-gradient-to-br from-blue-950/60 to-indigo-950/60 border border-gray-700 rounded-xl p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="text-xs font-semibold text-blue-400 uppercase tracking-wide">
+                        Aktuální počasí
+                    </div>
+                    <div class="text-xs text-gray-500"
+                         x-text="current && current.time_label ? ('k ' + current.time_label) : ''"></div>
+                </div>
+
+                <!-- Velká ikona + teplota -->
+                <div class="flex items-center gap-4 mb-4">
+                    <div class="text-5xl leading-none" x-text="current ? weatherEmoji(current) : '🌡️'"></div>
+                    <div>
+                        <div class="text-3xl font-black text-white"
+                             x-text="current ? current.temp_c + '°C' : '–'"></div>
+                        <div class="text-xs text-gray-400" x-text="current ? weatherLabel(current) : ''"></div>
+                    </div>
+                </div>
+
+                <!-- Detailní metriky -->
+                <div class="space-y-1.5 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">💧 Vlhkost</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="current && current.humidity_pct != null ? current.humidity_pct + '%' : '–'"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">☁️ Oblačnost</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="current && current.cloudiness_pct != null ? current.cloudiness_pct + '%' : '–'"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">🌧️ Srážky</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="current && current.precip_mm_h != null ? current.precip_mm_h + ' mm/h' : '–'"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">💨 Vítr</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="current && current.wind_ms != null ? (current.wind_ms + ' m/s ' + windDirLabel(current.wind_dir_deg)) : '–'"></span>
+                    </div>
+                    <div class="flex justify-between" x-show="current && current.wind_gust_ms">
+                        <span class="text-gray-500">🌬️ Nárazy</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="current ? current.wind_gust_ms + ' m/s' : '–'"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">🔵 Tlak</span>
+                        <span class="font-semibold text-gray-200"
+                              x-text="current && current.pressure_hpa != null ? current.pressure_hpa + ' hPa' : '–'"></span>
+                    </div>
+                </div>
+
+                <div class="mt-4 pt-3 border-t border-gray-700/60 text-xs text-gray-500 flex justify-between">
+                    <span>Korekce čidla AC</span>
+                    <span class="font-semibold text-gray-400"
+                          x-text="(weatherConfig.sensor_offset_c >= 0 ? '+' : '') + (weatherConfig.sensor_offset_c ?? 0) + '°C'"></span>
+                </div>
             </div>
-            <div class="bg-red-50 rounded-lg p-3">
-                <div class="text-xs text-slate-400 mb-1">Maximum</div>
-                <div class="font-bold text-red-600 text-lg" x-text="maxTemp + '°C'"></div>
-            </div>
-            <div class="bg-slate-50 rounded-lg p-3">
-                <div class="text-xs text-slate-400 mb-1">Korekce čidla AC</div>
-                <div class="font-bold text-slate-600 text-lg"
-                     x-text="(weatherConfig.sensor_offset_c >= 0 ? '+' : '') + (weatherConfig.sensor_offset_c ?? 0) + '°C'">
+
+            <!-- PRAVÝ sloupec: přepínací předpověď (Dny / Hodiny) -->
+            <div class="lg:col-span-2">
+                <!-- Záložky -->
+                <div class="flex gap-2 mb-4">
+                    <button @click="activeTab='days'"
+                            :class="activeTab==='days' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                            class="px-4 py-1.5 rounded-lg text-sm font-medium transition">
+                        📅 Dny
+                    </button>
+                    <button @click="activeTab='hours'"
+                            :class="activeTab==='hours' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                            class="px-4 py-1.5 rounded-lg text-sm font-medium transition">
+                        🕐 Hodiny
+                    </button>
+                </div>
+
+                <!-- DNY -->
+                <div x-show="activeTab==='days'"
+                     class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <template x-for="d in daily" :key="d.date_label">
+                        <div class="bg-gray-900/60 rounded-lg p-3 text-center">
+                            <div class="text-xs font-semibold text-gray-300" x-text="d.day_name"></div>
+                            <div class="text-[11px] text-gray-500" x-text="d.date_label"></div>
+                            <div class="text-3xl my-1" x-text="dayEmoji(d)"></div>
+                            <div class="text-sm">
+                                <span class="font-bold text-red-400" x-text="d.max_temp_c + '°'"></span>
+                                <span class="text-gray-600">/</span>
+                                <span class="font-bold text-blue-400" x-text="d.min_temp_c + '°'"></span>
+                            </div>
+                            <div class="mt-1 text-[11px] text-gray-500 space-y-0.5">
+                                <div x-show="d.total_precip_mm > 0">🌧️ <span x-text="d.total_precip_mm + ' mm'"></span></div>
+                                <div x-show="d.avg_cloudiness_pct != null">☁️ <span x-text="d.avg_cloudiness_pct + '%'"></span></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- HODINY -->
+                <div x-show="activeTab==='hours'">
+                    <!-- Posuvník: od aktuální hodiny po poslední dostupná data -->
+                    <div class="flex items-center gap-3 mb-3">
+                        <span class="text-xs text-gray-500 whitespace-nowrap"
+                              x-text="hourly.length ? hourly[hourIndex].date_label + ' ' + hourly[hourIndex].time_label : ''"></span>
+                        <input type="range" min="0" :max="Math.max(0, hourly.length - 1)"
+                               x-model.number="hourIndex" @input="scrollHours()"
+                               class="flex-1 accent-blue-500">
+                        <span class="text-xs text-gray-500 whitespace-nowrap"
+                              x-text="hourly.length ? '… ' + hourly[hourly.length-1].date_label : ''"></span>
+                    </div>
+
+                    <!-- Horizontální strip podrobných hodinových kartiček -->
+                    <div x-ref="hourStrip" class="flex gap-2 overflow-x-auto pb-2 scroll-smooth"
+                         style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
+                        <template x-for="(h, i) in hourly" :key="h.time_utc">
+                            <div :class="i===hourIndex ? 'ring-2 ring-blue-500 bg-gray-900' : 'bg-gray-900/60'"
+                                 class="flex-shrink-0 w-24 rounded-lg p-2 text-center transition">
+                                <div class="text-[11px] text-yellow-600/80" x-text="h.date_label"></div>
+                                <div class="text-xs font-semibold text-gray-300" x-text="h.time_label"></div>
+                                <div class="text-2xl my-1" x-text="weatherEmoji(h)"></div>
+                                <div class="font-bold text-blue-400 text-sm" x-text="h.temp_c + '°C'"></div>
+                                <div class="mt-1.5 space-y-0.5 text-[10px] text-gray-400 text-left">
+                                    <div x-show="h.humidity_pct != null">💧 <span x-text="h.humidity_pct + '%'"></span></div>
+                                    <div x-show="h.cloudiness_pct != null">☁️ <span x-text="h.cloudiness_pct + '%'"></span></div>
+                                    <div x-show="h.precip_mm_h">🌧️ <span x-text="h.precip_mm_h + ' mm'"></span></div>
+                                    <div x-show="h.wind_ms != null">💨 <span x-text="h.wind_ms + ' m/s ' + windDirLabel(h.wind_dir_deg)"></span></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
                 </div>
             </div>
         </div>
@@ -135,27 +245,91 @@ document.addEventListener('alpine:init', () => {
         controlMode: 'AUTO',
         weatherConfig: {},
         hourly: [],
+        daily: [],
+        current: null,
+        activeTab: 'days',   // 'days' | 'hours' – přepínací předpověď
+        hourIndex: 0,        // pozice posuvníku v hodinovém stripu
         loadingForecast: true,
         forecastError: null,
-        _chart: null,
 
         get forecastSubtitle() {
             if (this.loadingForecast) return 'Načítám…';
             if (this.forecastError) return 'Chyba při načítání';
             if (!this.hourly.length) return 'Žádná data';
-            const loc  = this.weatherConfig.chmi_location_label || '';
-            const h    = this.weatherConfig.horizon_hours || 24;
-            return `${loc} – dalších ${h} hodin`;
+            const loc = this.weatherConfig.chmi_location_label || '';
+            return `${loc} – dalších ${this.hourly.length} hodin`;
         },
-        get minTemp() {
-            return this.hourly.length
-                ? Math.min(...this.hourly.map(h => h.temp_c))
-                : '–';
+
+        /**
+         * Odvodí emoji symbol počasí z oblačnosti a srážek daného bodu.
+         * @param {object} p - bod předpovědi (cloudiness_pct, precip_mm_h, snow_mm_h)
+         * @returns {string} emoji reprezentující stav počasí
+         */
+        weatherEmoji(p) {
+            if (!p) return '🌡️';
+            const snow = p.snow_mm_h ?? 0;
+            const precip = p.precip_mm_h ?? 0;
+            const clouds = p.cloudiness_pct ?? 0;
+            if (snow > 0) return '🌨️';
+            if (precip >= 2) return '🌧️';
+            if (precip > 0) return '🌦️';
+            if (clouds < 20) return '☀️';
+            if (clouds < 50) return '🌤️';
+            if (clouds < 85) return '⛅';
+            return '☁️';
         },
-        get maxTemp() {
-            return this.hourly.length
-                ? Math.max(...this.hourly.map(h => h.temp_c))
-                : '–';
+
+        /**
+         * Slovní popis stavu počasí pro daný bod předpovědi.
+         * @param {object} p - bod předpovědi
+         * @returns {string} český popis (Jasno, Zataženo, Déšť …)
+         */
+        weatherLabel(p) {
+            if (!p) return '';
+            const snow = p.snow_mm_h ?? 0;
+            const precip = p.precip_mm_h ?? 0;
+            const clouds = p.cloudiness_pct ?? 0;
+            if (snow > 0) return 'Sněžení';
+            if (precip >= 2) return 'Déšť';
+            if (precip > 0) return 'Slabý déšť';
+            if (clouds < 20) return 'Jasno';
+            if (clouds < 50) return 'Skoro jasno';
+            if (clouds < 85) return 'Polojasno';
+            return 'Zataženo';
+        },
+
+        /**
+         * Reprezentativní emoji pro celý den z denních agregátů.
+         * @param {object} d - denní souhrn (avg_cloudiness_pct, total_precip_mm)
+         * @returns {string} emoji počasí
+         */
+        dayEmoji(d) {
+            return this.weatherEmoji({
+                cloudiness_pct: d.avg_cloudiness_pct,
+                precip_mm_h: (d.total_precip_mm ?? 0) >= 1 ? 2 : (d.total_precip_mm ?? 0),
+            });
+        },
+
+        /**
+         * Posune hodinový strip tak, aby byla vybraná kartička vycentrovaná.
+         * Volá se při změně posuvníku ``hourIndex``.
+         */
+        scrollHours() {
+            const strip = this.$refs.hourStrip;
+            if (!strip) return;
+            const card = strip.children[this.hourIndex];
+            if (card) card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        },
+
+        /**
+         * Převede směr větru ve stupních na světovou stranu (N, NE, …).
+         * @param {number} deg - směr větru ve stupních (0–360)
+         * @returns {string} zkratka světové strany nebo '–'
+         */
+        windDirLabel(deg) {
+            if (deg === null || deg === undefined) return '–';
+            const dirs = ['S', 'SV', 'V', 'JV', 'J', 'JZ', 'Z', 'SZ'];
+            return dirs[Math.round(deg / 45) % 8];
         },
 
         async init() {
@@ -188,130 +362,16 @@ document.addEventListener('alpine:init', () => {
                     this.forecastError = d.error;
                 } else {
                     this.hourly = d.hourly || [];
+                    this.daily = d.daily || [];
+                    this.current = d.current || null;
+                    this.hourIndex = 0;
                     this.weatherConfig = { ...this.weatherConfig, ...d };
-                    await this.$nextTick();
-                    this._buildChart();
                 }
             } catch (e) {
                 this.forecastError = `Nepodařilo se načíst předpověď: ${e.message}`;
             } finally {
                 this.loadingForecast = false;
             }
-        },
-
-        _buildChart() {
-            if (!this.hourly.length || !this.$refs.chart) return;
-            if (this._chart) { this._chart.destroy(); this._chart = null; }
-
-            const labels  = this.hourly.map(h => h.time_label);
-            const temps   = this.hourly.map(h => h.temp_c);
-            const clouds  = this.hourly.map(h => h.cloudiness_pct ?? null);
-            const precip  = this.hourly.map(h => h.precip_mm_h ?? 0);
-            const hasClouds = clouds.some(v => v !== null);
-            const hasPrecip = precip.some(v => v > 0);
-
-            const datasets = [
-                {
-                    type: 'line',
-                    label: 'Teplota (°C)',
-                    data: temps,
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59,130,246,0.10)',
-                    fill: true,
-                    tension: 0.4,
-                    yAxisID: 'y',
-                    pointRadius: 3,
-                    pointHoverRadius: 5,
-                    borderWidth: 2,
-                    order: 1,
-                },
-            ];
-
-            if (hasClouds) {
-                datasets.push({
-                    type: 'line',
-                    label: 'Oblačnost (%)',
-                    data: clouds,
-                    borderColor: 'rgba(148,163,184,0.7)',
-                    backgroundColor: 'rgba(148,163,184,0.05)',
-                    fill: true,
-                    tension: 0.4,
-                    yAxisID: 'cloud',
-                    pointRadius: 1,
-                    borderWidth: 1.5,
-                    borderDash: [4, 3],
-                    order: 3,
-                });
-            }
-
-            if (hasPrecip) {
-                datasets.push({
-                    type: 'bar',
-                    label: 'Srážky (mm/h)',
-                    data: precip,
-                    backgroundColor: 'rgba(99,102,241,0.45)',
-                    borderColor: 'rgba(99,102,241,0.8)',
-                    borderWidth: 1,
-                    yAxisID: 'precip',
-                    order: 2,
-                });
-            }
-
-            this._chart = new Chart(this.$refs.chart, {
-                data: { labels, datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { mode: 'index', intersect: false },
-                    plugins: {
-                        legend: {
-                            position: 'top',
-                            labels: { boxWidth: 12, font: { size: 11 } }
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: ctx => {
-                                    const v = ctx.parsed.y;
-                                    if (v === null) return null;
-                                    if (ctx.dataset.yAxisID === 'y')      return `Teplota: ${v}°C`;
-                                    if (ctx.dataset.yAxisID === 'cloud')  return `Oblačnost: ${v}%`;
-                                    if (ctx.dataset.yAxisID === 'precip') return `Srážky: ${v} mm/h`;
-                                    return `${ctx.dataset.label}: ${v}`;
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            grid: { color: 'rgba(148,163,184,0.15)' },
-                            ticks: { font: { size: 11 }, maxTicksLimit: 13 }
-                        },
-                        y: {
-                            position: 'left',
-                            title: { display: true, text: '°C', font: { size: 11 } },
-                            grid: { color: 'rgba(148,163,184,0.2)' },
-                            ticks: { font: { size: 11 } },
-                        },
-                        cloud: {
-                            position: 'right',
-                            min: 0, max: 100,
-                            title: { display: hasClouds, text: '%', font: { size: 11 } },
-                            grid: { drawOnChartArea: false },
-                            ticks: { font: { size: 11 } },
-                            display: hasClouds,
-                        },
-                        precip: {
-                            position: 'right',
-                            min: 0,
-                            title: { display: hasPrecip, text: 'mm/h', font: { size: 11 } },
-                            grid: { drawOnChartArea: false },
-                            ticks: { font: { size: 11 } },
-                            display: hasPrecip,
-                            offset: hasClouds,
-                        }
-                    }
-                }
-            });
         },
 
         async toggleMode() {

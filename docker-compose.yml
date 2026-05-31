@@ -2,10 +2,12 @@
 # Spuštění: docker compose up -d
 # Zastavení: docker compose down
 #
+# Konfigurace se načítá ze souboru .env (zkopírujte z .env.example).
+#
 # Data složka (data/) musí obsahovat:
-#   config.json        – přístupový token a nastavení
-#   devices.json       – seznam zařízení
+#   devices.json          – seznam zařízení
 #   automation_rules.json – pravidla automatizace
+#   (přihlašovací údaje ThinQ doporučeno přes .env: LG_ACCESS_TOKEN atd.)
 #
 # Příklady jsou v data/*.json.example
 
@@ -16,10 +18,15 @@ services:
       dockerfile: Dockerfile
     image: lg-klimatizace:latest
     container_name: lg-klimatizace
-    ports:
-      # HOST_PORT:CONTAINER_PORT
-      # Změňte HOST_PORT pokud 8000 je obsazeno (např. "8080:8000")
-      - "8000:8000"
+    env_file:
+      - .env
+    # Bez Cloudflare Tunnel: odkomentujte 'ports' pro přístup z LAN.
+    # S Cloudflare Tunnel: ponechte zakomentované – port se NEVYSTAVUJE
+    # na hostu, cloudflared se připojuje přes interní docker síť (expose).
+    # ports:
+    #   - "8000:8000"
+    expose:
+      - "8000"
     volumes:
       # Data složka je read-write – schedule.json a jiné soubory se zapisují za běhu
       - ./data:/app/data
@@ -30,16 +37,19 @@ services:
     # Healthcheck je definován v Dockerfile; compose ho zdědí automaticky
 
   # ----------------------------------------------------------------
-  # Cloudflare Tunnel – přístup z internetu bez otevřených portů
-  # Aktivujte odkomentováním; token získáte na dash.cloudflare.com
+  # Cloudflare Tunnel – přístup z internetu bez otevřených portů.
+  # Origin IP serveru zůstává skrytá; provoz jde přes interní docker síť
+  # na lg-klimatizace:8000. Token získáte na dash.cloudflare.com
+  # (Zero Trust → Networks → Tunnels) a vložíte do .env jako
+  # CLOUDFLARE_TUNNEL_TOKEN. Autentizaci řešte přes Cloudflare Access.
   # Docs: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
   # ----------------------------------------------------------------
-  # cloudflared:
-  #   image: cloudflare/cloudflared:latest
-  #   container_name: lg-cloudflared
-  #   restart: unless-stopped
-  #   command: tunnel --no-autoupdate run
-  #   environment:
-  #     - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-  #   depends_on:
-  #     - lg-klimatizace
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: lg-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - lg-klimatizace
