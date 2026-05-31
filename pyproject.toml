@@ -1,0 +1,33 @@
+[project]
+name = "lg-klimatizace"
+version = "1.0.0"
+description = "Webové rozhraní pro ovládání LG ThinQ klimatizace přes domácí síť"
+requires-python = ">=3.12"
+dependencies = [
+    # LG ThinQ API + MQTT klient (zahrnuje awscrt a awsiotsdk)
+    "thinqconnect>=1.0.12",
+    # Asynchronní HTTP klient (vyžadován thinqconnect i server_api.py)
+    "aiohttp>=3.12.15",
+    # AWS IoT SDK pro MQTT
+    "awscrt>=0.27.4",
+    "awsiotsdk>=1.24.0",
+    # TLS a kryptografie (vyžadováno pro MQTT certifikáty)
+    "cryptography>=45.0.6",
+    "pyOpenSSL>=25.1.0",
+    # HTTP klient pro zpětnou kompatibilitu (frontend.py)
+    "requests>=2.32.4",
+    # Web server
+    "fastapi>=0.115.12",
+    "uvicorn[standard]>=0.34.3",
+    "jinja2>=3.1.6",
+    "python-multipart>=0.0.20",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Zahrne pouze adresář src/ do wheel balíčku
+packages = ["src"]
+

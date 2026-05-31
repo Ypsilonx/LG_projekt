@@ -4,6 +4,7 @@
 FastAPI webová aplikace pro ovládání LG ThinQ klimatizací. Real-time MQTT push, plánování (HAND scheduler), sezónní automatika, ČHMÚ forecast. Primárně pro trvalé nasazení v domácí síti přes Docker.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Funkce
@@ -55,6 +56,10 @@ data/                      # Docker volume (necommitovat config.json, devices.js
 
 Dockerfile                 # python:3.12-slim, non-root uid 1000
 docker-compose.yml         # lg-klimatizace + cloudflared (volitelné)
+pyproject.toml             # definice projektu a závislostí (UV)
+uv.lock                    # lockfile – přesné verze závislostí (commitovat!)
+.python-version            # fixace Python verze pro UV
+requirements.txt           # autogenerovaný z uv.lock (pip fallback)
 ```
 
 ## Rychlé spuštění
@@ -62,18 +67,29 @@ docker-compose.yml         # lg-klimatizace + cloudflared (volitelné)
 ### Předpoklady
 
 - Python 3.12+
+- [UV](https://docs.astral.sh/uv/) – správce závislostí (doporučeno), nebo klasický pip
 - LG ThinQ účet s registrovanými zařízeními
 - LG Developer API přístup: <https://developer.lgaccount.com/>
   Získejte: `access_token`, `client_id`, `device_id`
 
 ### Instalace
 
+**Doporučeno – UV** ([instalace UV](https://docs.astral.sh/uv/getting-started/installation/)):
+
+```powershell
+# Windows i Linux/macOS – UV vytvoří .venv a nainstaluje přesné verze z uv.lock
+uv sync
+uv run python setup.py   # vytvoří konfigurační soubory z šablon
+```
+
+**Alternativa – klasický pip** (bez UV):
+
 ```powershell
 # Windows
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python setup.py          # vytvoří konfigurační soubory z šablon
+python setup.py
 ```
 
 ```bash
@@ -83,6 +99,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python setup.py
 ```
+
+> `requirements.txt` je autogenerovaný z `uv.lock` příkazem `uv export`. Oba soubory jsou synchronizované.
 
 ### Konfigurace
 
@@ -115,12 +133,15 @@ Volitelně `data/automation_rules.json` – sezóny, weather provider (POI, regi
 ### Spuštění
 
 ```powershell
-# Web server (doporučeno)
-python src/main.py --mode web
+# Web server (doporučeno) – přes UV (bez nutnosti aktivovat .venv)
+uv run python src/main.py --mode web
 # → http://localhost:8000    Swagger: http://localhost:8000/docs
 
+# Nebo s aktivovaným .venv (klasicky)
+python src/main.py --mode web
+
 # CLI (smoke test)
-python src/main.py --mode cli --status
+uv run python src/main.py --mode cli --status
 
 # Docker (trvalé nasazení)
 docker-compose up -d
@@ -164,10 +185,11 @@ docker-compose logs -f lg-klimatizace
 `.gitignore` a `.dockerignore` automaticky vylučují citlivé soubory:
 
 | Commitovat | Necommitovat |
-|------------|--------------|
+|------------|---------------|
 | `data/*.example` | `data/config.json` |
 | `src/`, `Dockerfile` | `data/devices.json` |
 | `docker-compose.yml` | `data/schedule.json` |
+| `pyproject.toml`, `uv.lock` | `.venv/` |
 
 - Token Cloudflare Tunnel ukládejte jako systémovou proměnnou (`CLOUDFLARE_TUNNEL_TOKEN`), nikdy do souborů.
 - Rotujte API klíče pravidelně.
@@ -176,7 +198,7 @@ docker-compose logs -f lg-klimatizace
 
 | Chyba | Řešení |
 |-------|--------|
-| `FileNotFoundError: config.json` | Spusťte `python setup.py` |
+| `FileNotFoundError: config.json` | Spusťte `uv run python setup.py` nebo `python setup.py` |
 | `401 / 403` | Zkontrolujte `data/config.json`, ověřte PAT v LG Developer portálu |
 | `503 Service Unavailable` | LG API dočasně nedostupné; aplikace opakuje automaticky (3×) |
 | `NOT_PROVIDED_FEATURE` | Funkce není modelem podporována – viz `device_profile.json` |
