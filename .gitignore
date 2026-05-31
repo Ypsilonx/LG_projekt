@@ -13,7 +13,8 @@ data/automation_rules.json
 # Šablony NEJSOU ignorovány - .example soubory se commitnou
 
 # Nastavení editoru
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .idea/
 
 # Dočasné a záložní soubory
