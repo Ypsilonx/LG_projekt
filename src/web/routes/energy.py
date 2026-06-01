@@ -11,8 +11,10 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 
 from energy_analytics import (
+    build_energy_csv_text,
     format_used_date,
     normalize_energy_records,
     resolve_energy_query,
@@ -57,6 +59,7 @@ async def get_energy_usage(
     device_id: str,
     request: Request,
     view: str = Query("weekly", description="Pohled: daily | weekly | monthly | yearly"),
+    offset: int = Query(0, ge=0, description="Posun do historie (0 = aktuální, kladné = zpět)"),
 ) -> dict:
     """
     Načte a normalizuje data spotřeby energie ze zařízení.
@@ -64,20 +67,23 @@ async def get_energy_usage(
     Args:
         device_id: ThinQ ID zařízení.
         view:      Pohled – daily (dnes), weekly (7 dní), monthly (měsíc), yearly (12 měsíců).
+        offset:    Posun do historie v počtu období (0 = aktuální, kladné = zpět).
 
     Returns:
         dict s klíči:
-            view_key  – zvolený pohled
-            period    – API perioda (DAILY / MONTHLY)
-            total_kwh – celková spotřeba v kWh
-            records   – seznam záznamů [usedDate, label, energyUsage (Wh)]
+            view_key    – zvolený pohled
+            period      – API perioda (DAILY / MONTHLY)
+            offset      – aktuální posun do historie
+            range_label – čitelný popisek období
+            total_kwh   – celková spotřeba v kWh
+            records     – seznam záznamů [usedDate, label, energyUsage (Wh)]
 
     Raises:
         HTTPException 503: API není k dispozici.
         HTTPException 502: Chyba komunikace s ThinQ.
     """
     api = _get_api(request)
-    query = resolve_energy_query(view)
+    query = resolve_energy_query(view, offset=offset)
 
     try:
         raw = await api.get_energy_usage(
@@ -98,8 +104,75 @@ async def get_energy_usage(
         rec["label"] = format_used_date(rec["usedDate"], query.period)
 
     return {
-        "view_key":  query.view_key,
-        "period":    query.period,
-        "total_kwh": round(total_energy_kwh(records), 3),
-        "records":   records,
+        "view_key":    query.view_key,
+        "period":      query.period,
+        "offset":      query.offset,
+        "range_label": query.range_label,
+        "total_kwh":   round(total_energy_kwh(records), 3),
+        "records":     records,
     }
+
+
+@router.get(
+    "/{device_id}/export",
+    summary="Export spotřeby energie do CSV",
+    description=(
+        "Vrátí podrobná data spotřeby zvoleného období jako CSV "
+        "(oddělovač ';', UTF-8 s BOM – přímo otevíratelné v Excelu)."
+    ),
+)
+async def export_energy_usage(
+    device_id: str,
+    request: Request,
+    view: str = Query("weekly", description="Pohled: daily | weekly | monthly | yearly"),
+    offset: int = Query(0, ge=0, description="Posun do historie (0 = aktuální, kladné = zpět)"),
+) -> Response:
+    """
+    Sestaví a vrátí CSV export spotřeby pro zvolený pohled a období.
+
+    Args:
+        device_id: ThinQ ID zařízení.
+        view:      Pohled – daily | weekly | monthly | yearly.
+        offset:    Posun do historie v počtu období (0 = aktuální).
+
+    Returns:
+        Response: CSV soubor ke stažení (text/csv, UTF-8 s BOM).
+
+    Raises:
+        HTTPException 503: API není k dispozici.
+        HTTPException 502: Chyba komunikace s ThinQ.
+    """
+    api = _get_api(request)
+    query = resolve_energy_query(view, offset=offset)
+
+    try:
+        raw = await api.get_energy_usage(
+            device_id,
+            query.period,
+            query.start_date,
+            query.end_date,
+        )
+    except Exception as exc:
+        logger.error("Chyba exportu energy usage (%s): %s", device_id[:8], exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Chyba komunikace s ThinQ API: {exc}",
+        ) from exc
+
+    records = normalize_energy_records(raw or [])
+    csv_text = build_energy_csv_text(
+        records,
+        period=query.period,
+        view_label=query.label,
+        range_label=query.range_label,
+    )
+
+    # UTF-8 BOM zajistí správné zobrazení diakritiky při otevření v Excelu.
+    body = ("\ufeff" + csv_text).encode("utf-8")
+    filename = f"spotreba_{query.view_key}_{query.start_date}-{query.end_date}.csv"
+
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

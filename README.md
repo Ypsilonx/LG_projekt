@@ -17,7 +17,7 @@ FastAPI webová aplikace pro ovládání LG ThinQ klimatizací. Real-time MQTT p
 - **ČHMÚ forecast** – meteogram POI 510 (model ALADIN, asimiluje radar), horizont **72 h**, fallback na region RPZL; sjednocený **tmavý widget** na dashboardu i stránce automatizace: **vlevo aktuální počasí (vždy viditelné)** – velká ikona, teplota, slovní popis a detaily (vlhkost, oblačnost, srážky, vítr + směr `wind_dir_deg`, nárazy, tlak); **vpravo přepínací záložky Dny / Hodiny** – denní min/max teplota + srážky/oblačnost, hodinová předpověď s posuvníkem a horizontálním stripem podrobných kartiček; data jsou **automaticky obnovována** background taskem `_weather_refresh_loop` v intervalu `refresh_interval_hours` (výchozí **3 h**) – nezávisle na aktivním režimu (AUTO/HAND); první fetch proběhne okamžitě při startu serveru
 - **Perzistence počasí** – poslední úspěšně stažená předpověď se ukládá do `data/weather_cache.json` (atomický zápis, přepisuje se při každé aktualizaci); při startu serveru se načte z disku, takže počasí je vidět **okamžitě po restartu** bez čekání na první fetch (základ pro budoucí plánovací automatiku)
 - **Sezónní automatika** – zima/přechod/léto, blokace COOL mimo léto, PID-like regulace cílové teploty
-- **Energy reporting** – den/týden/měsíc/rok, export CSV
+- **Energy reporting** – den/týden/měsíc/rok s **procházením historie** (◀ / ▶ posun na starší období, popisek aktuálního rozsahu); **export do CSV** (UTF-8 s BOM, oddělovač `;` – přímo otevíratelné v Excelu) s podrobnými sloupci (raw i ISO datum, Wh, kWh, procentní podíl na období)
 - **Docker** – `docker-compose up`, dostupné z domácí sítě, volitelný Cloudflare Tunnel
 - **CLI** – `--mode cli --status`, `--list-devices`, `--command` pro smoke testy
 
@@ -43,6 +43,7 @@ src/
     │   ├── control.py     # POST /api/devices/{id}/command
     │   ├── mode.py        # GET/POST /api/mode/  (AUTO ↔ HAND)
     │   ├── schedule.py    # CRUD /api/schedule/entries
+    │   ├── energy.py      # GET /api/energy/{id} (view+offset), /{id}/export (CSV)
     │   ├── weather.py     # GET /api/weather/forecast, /config
     │   └── ws.py          # WebSocket /ws – real-time MQTT push
     ├── templates/         # Jinja2 šablony (Tailwind CDN + Alpine.js)

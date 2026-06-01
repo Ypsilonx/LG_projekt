@@ -863,7 +863,7 @@
             </div>
             <div class="flex gap-1.5">
                 <template x-for="v in ['daily','weekly','monthly','yearly']" :key="v">
-                    <button @click="loadEnergy(v)"
+                    <button @click="selectEnergyView(v)"
                             :class="energyView === v
                                 ? 'bg-blue-600 text-white'
                                 : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'"
@@ -872,6 +872,33 @@
                     </button>
                 </template>
             </div>
+        </div>
+
+        <!-- Navigace historií + popisek období -->
+        <div class="flex items-center justify-between gap-2 px-5 py-2 border-b border-gray-700 bg-gray-800/60">
+            <button @click="energyOlder()"
+                    :disabled="energyLoading"
+                    class="px-2.5 py-1 rounded-md text-xs font-medium bg-gray-700 text-gray-300
+                           hover:bg-gray-600 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed
+                           transition-colors"
+                    title="Starší období">◀</button>
+
+            <span class="text-xs text-gray-300 font-medium tabular-nums text-center flex-1 truncate"
+                  x-text="energyRangeLabel || '—'"></span>
+
+            <button @click="energyNewer()"
+                    :disabled="energyLoading || energyOffset === 0"
+                    class="px-2.5 py-1 rounded-md text-xs font-medium bg-gray-700 text-gray-300
+                           hover:bg-gray-600 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed
+                           transition-colors"
+                    title="Novější období">▶</button>
+
+            <button @click="exportEnergy()"
+                    :disabled="energyLoading || energyRecords.length === 0"
+                    class="ml-1 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-700 text-emerald-50
+                           hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed
+                           transition-colors"
+                    title="Export do CSV (Excel)">⬇ CSV</button>
         </div>
 
         <!-- Obsah -->
@@ -901,7 +928,9 @@
                           x-text="energyTotal.toFixed(2)"></span>
                     <span class="text-gray-400 text-sm">kWh celkem</span>
                     <span class="ml-auto text-xs text-gray-500"
-                          x-text="{ daily:'dnes', weekly:'za posledních 7 dní', monthly:'tento měsíc', yearly:'za posledních 12 měsíců' }[energyView]">
+                          x-text="energyOffset === 0
+                              ? { daily:'dnes', weekly:'za posledních 7 dní', monthly:'tento měsíc', yearly:'za posledních 12 měsíců' }[energyView]
+                              : energyRangeLabel">
                     </span>
                 </div>
 
@@ -995,6 +1024,8 @@ document.addEventListener('alpine:init', () => {
 
         // ── Energie ─────────────────────────────────────────────
         energyView:         'weekly',
+        energyOffset:       0,
+        energyRangeLabel:   '',
         energyRecords:      [],
         energyTotal:        0,
         energyLoading:      false,
@@ -1147,7 +1178,7 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Načte data spotřeby pro zvolený pohled (daily/weekly/monthly/yearly).
-         * Volání bez argumentu obnoví aktuálně zvolený pohled.
+         * Volání bez argumentu obnoví aktuálně zvolený pohled a offset.
          */
         async loadEnergy(view) {
             if (!this.deviceId) return;
@@ -1155,11 +1186,13 @@ document.addEventListener('alpine:init', () => {
             this.energyLoading = true;
             this.energyError   = null;
             try {
-                const r = await fetch(`/api/energy/${this.deviceId}?view=${this.energyView}`);
+                const r = await fetch(
+                    `/api/energy/${this.deviceId}?view=${this.energyView}&offset=${this.energyOffset}`);
                 if (r.ok) {
                     const d = await r.json();
-                    this.energyRecords = d.records || [];
-                    this.energyTotal   = d.total_kwh ?? 0;
+                    this.energyRecords    = d.records || [];
+                    this.energyTotal      = d.total_kwh ?? 0;
+                    this.energyRangeLabel = d.range_label ?? '';
                 } else {
                     this.energyError = 'Nepodařilo se načíst data o spotřebě.';
                 }
@@ -1168,6 +1201,34 @@ document.addEventListener('alpine:init', () => {
             } finally {
                 this.energyLoading = false;
             }
+        },
+
+        /** Přepne pohled (Dnes/Týden/Měsíc/Rok) a vrátí se na aktuální období. */
+        selectEnergyView(view) {
+            if (this.energyView === view && this.energyOffset === 0) return;
+            this.energyOffset = 0;
+            this.loadEnergy(view);
+        },
+
+        /** Posun do minulosti o jedno období. */
+        energyOlder() {
+            this.energyOffset += 1;
+            this.loadEnergy();
+        },
+
+        /** Posun do současnosti o jedno období (nelze za aktuální). */
+        energyNewer() {
+            if (this.energyOffset === 0) return;
+            this.energyOffset = Math.max(0, this.energyOffset - 1);
+            this.loadEnergy();
+        },
+
+        /** Stáhne CSV export aktuálního pohledu a období přes prohlížeč. */
+        exportEnergy() {
+            if (!this.deviceId || this.energyRecords.length === 0) return;
+            const url = `/api/energy/${this.deviceId}/export`
+                + `?view=${this.energyView}&offset=${this.energyOffset}`;
+            window.location.href = url;
         },
 
         /** Načte pouze dnešní kWh pro status bar chip (tichý fetch, bez loading stavu). */
