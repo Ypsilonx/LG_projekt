@@ -93,19 +93,35 @@
     <!-- ═══════════════════════════════════════════════════════
          POČASÍ
     ════════════════════════════════════════════════════════ -->
-    <div class="bg-gray-800 border border-gray-700 rounded-xl p-5 mb-5">
+    <!-- Při aktivaci sticky: panel zůstane viditelný při scrollování dolů k plánům.
+         top: 48px odpovídá výšce navigační lišty (h-12 = 3rem). -->
+    <div :class="weatherSticky
+                    ? 'sticky z-40 shadow-2xl ring-1 ring-blue-500/30'
+                    : ''"
+         style="top: 48px"
+         class="bg-gray-800 border border-gray-700 rounded-xl p-5 mb-5 transition-shadow">
 
-        <!-- Hlavička: lokace + zdroj + obnovit -->
+        <!-- Hlavička: lokace + zdroj + obnovit + připnout -->
         <div class="flex items-center justify-between mb-4">
             <div>
                 <div class="text-sm font-semibold text-gray-100"
                      x-text="weatherConfig.chmi_location_label || 'Počasí'"></div>
                 <div class="text-xs text-gray-500" x-text="weatherSubtitle"></div>
             </div>
-            <button @click="loadForecast()" :disabled="loadingForecast"
-                    class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 transition-colors font-medium">
-                🔄 Obnovit
-            </button>
+            <div class="flex items-center gap-3">
+                <button @click="weatherSticky = !weatherSticky"
+                        :title="weatherSticky ? 'Odpnout počasí – panel se bude scrollovat normálně' : 'Připnout počasí – panel zůstane viditelný při scrollování k plánům'"
+                        :class="weatherSticky
+                            ? 'text-yellow-400 hover:text-yellow-300'
+                            : 'text-gray-500 hover:text-gray-300'"
+                        class="text-base transition-colors leading-none">
+                    📌
+                </button>
+                <button @click="loadForecast()" :disabled="loadingForecast"
+                        class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 transition-colors font-medium">
+                    🔄 Obnovit
+                </button>
+            </div>
         </div>
 
         <!-- Skeleton -->
@@ -234,9 +250,11 @@
                               x-text="hourly.length ? '… ' + hourly[hourly.length-1].date_label : ''"></span>
                     </div>
 
-                    <!-- Horizontální strip podrobných hodinových kartiček -->
-                    <div x-ref="hourStrip" class="flex gap-2 overflow-x-auto pb-2 scroll-smooth"
-                         style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
+                    <!-- Horizontální strip podrobných hodinových kartiček.
+                         overflow-x zůstává kvůli programatickému scrollIntoView;
+                         vizuální scrollbar je skrytý – navigaci řídí posuvník výše. -->
+                    <div x-ref="hourStrip" class="flex gap-2 overflow-x-auto py-1 scroll-smooth no-scrollbar"
+                         style="scrollbar-width: none; -ms-overflow-style: none;">
                         <template x-for="(h, i) in hourly" :key="h.time_utc">
                             <div :class="i===hourIndex ? 'ring-2 ring-blue-500 bg-gray-900' : 'bg-gray-900/60'"
                                  class="flex-shrink-0 w-24 rounded-lg p-2 text-center transition">
@@ -986,6 +1004,7 @@ document.addEventListener('alpine:init', () => {
         showHumidity:   true,
         weatherTab:     'days',     // 'days' | 'hours'
         hourIndex:      0,          // vybraná hodina v posuvníku
+        weatherSticky:  false,      // true = panel připlácnut nahoře při scrollování
         daily:          [],         // denní agregáty z /api/weather/forecast
 
         // ── Teplotní limity z device profilu ───────────────────────
@@ -1121,6 +1140,10 @@ document.addEventListener('alpine:init', () => {
             }, 5 * 60_000);
             // Hodinový refresh energetických dat
             setInterval(() => { this.loadEnergy(); this.loadTodayEnergy(); }, 60 * 60_000);
+            // Periodický refresh předpovědi počasí v browseru (každých 30 minut).
+            // Server data stahuje dle refresh_interval_hours (výchozí 3 h); browser
+            // tímto intervalem zachytí nově uložená data bez nutnosti ručního obnovení.
+            setInterval(() => { this.loadForecast(); }, 30 * 60_000);
         },
 
         // ── Načítání dat ──────────────────────────────────────────────

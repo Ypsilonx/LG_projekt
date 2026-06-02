@@ -1,2 +1,11 @@
 /* LG Klimatizace – vlastní CSS doplňky nad Tailwind */
-/* Zatím prázdné – Tailwind CDN pokrývá vše pro MVP */
+
+/* Skrytí scrollbaru při zachování možnosti programatického posouvání (scrollIntoView).
+   Tailwind CDN nemá scrollbar-hide utilitu – řešíme přes vlastní třídu. */
+.no-scrollbar {
+    scrollbar-width: none;          /* Firefox */
+    -ms-overflow-style: none;       /* IE/Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+    display: none;                  /* Chrome / Safari / Opera */
+}

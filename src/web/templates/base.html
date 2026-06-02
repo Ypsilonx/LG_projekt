@@ -6,7 +6,11 @@
     <title>{% block title %}LG Klimatizace{% endblock %}</title>
 
     <!-- x-cloak: skryje nepřipravené elementy dokud Alpine.js neinicializuje -->
-    <style>[x-cloak]{display:none!important}</style>
+    <style>
+        [x-cloak]{display:none!important}
+        /* Skrytí scrollbaru – WebKit fallback pro případ pomalého načtení app.css */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
 
     <!-- Tailwind CSS – Play CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -21,6 +25,9 @@
             }
         }
     </script>
+
+    <!-- Vlastní CSS doplňky (no-scrollbar aj.) -->
+    <link rel="stylesheet" href="/static/css/app.css">
 
     <!-- Alpine.js – reaktivní UI bez build kroku -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
