@@ -22,6 +22,9 @@
     "refresh_interval_hours": 3,
     "comfort_margin_c": 1.0,
     "prefer_aladin_model": true,
-    "adjust_mode_by_forecast": true
+    "adjust_mode_by_forecast": true,
+    "current_temperature_c": null,
+    "current_temperature_source": "external",
+    "current_temperature_url": null
   }
 }

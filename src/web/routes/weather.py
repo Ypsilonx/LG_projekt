@@ -13,6 +13,8 @@ v ``automation_rules.json`` (výchozí: 3 hodiny).
 
 import json
 import logging
+import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -48,6 +50,172 @@ def _load_weather_config() -> dict:
         return rules.get("weather", {})
     except Exception:
         return {}
+
+
+def _read_optional_float(value: object) -> float | None:
+    """Convert a value to float when possible."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_temperature_from_payload(payload: object) -> float | None:
+    """Extract a temperature value from a JSON payload.
+
+    The helper accepts several common shapes such as
+    ``{"temperature_c": 12.3}``, ``{"temp_c": 12.3}`` or nested objects.
+    """
+    if payload is None:
+        return None
+
+    if isinstance(payload, (int, float)):
+        return float(payload)
+
+    if isinstance(payload, dict):
+        for key in ("current_temperature_c", "temperature_c", "temp_c", "value", "current_temp_c"):
+            value = _read_optional_float(payload.get(key))
+            if value is not None:
+                return value
+
+        for nested_key in ("current", "data", "result"):
+            nested_value = payload.get(nested_key)
+            if nested_value is not None:
+                extracted = _extract_temperature_from_payload(nested_value)
+                if extracted is not None:
+                    return extracted
+
+    if isinstance(payload, (list, tuple)):
+        for item in payload:
+            extracted = _extract_temperature_from_payload(item)
+            if extracted is not None:
+                return extracted
+
+    return None
+
+
+def _extract_temperature_from_chmi_html(html_text: str) -> float | None:
+    """Extract the latest temperature from the CHMI station HTML page.
+
+    The page contains values like ``22,0 °C`` in a measurement table. The
+    parser looks for the first temperature occurrence in the document and
+    converts the comma decimal separator to a dot.
+    """
+    if not html_text:
+        return None
+
+    match = re.search(r"(\d{1,2}),\s*(\d)\s*°C", html_text)
+    if match is None:
+        return None
+
+    whole = int(match.group(1))
+    fractional = int(match.group(2))
+    return round(float(f"{whole}.{fractional}"), 1)
+
+
+async def _fetch_external_current_temperature(
+    config: dict,
+    session: aiohttp.ClientSession | None = None,
+) -> tuple[float | None, str]:
+    """Fetch current temperature from an external HTTP endpoint if configured.
+
+    The endpoint can return a simple JSON object, for example
+    ``{"temperature_c": 12.3}`` or ``{"current": {"temp_c": 12.3}}``.
+    If the fetch fails or the payload is invalid, the function returns
+    ``(None, "forecast")`` so the existing forecast fallback remains active.
+    """
+    override_value = config.get("current_temperature_c")
+    if override_value is None:
+        override_value = os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_C")
+
+    if override_value is not None:
+        try:
+            return float(override_value), str(
+                config.get("current_temperature_source")
+                or os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_SOURCE")
+                or "external"
+            )
+        except (TypeError, ValueError):
+            logger.warning("Neplatná hodnota current_temperature_c: %s", override_value)
+
+    url = config.get("current_temperature_url") or os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_URL")
+    if not url:
+        return None, "forecast"
+
+    source_label = str(
+        config.get("current_temperature_source")
+        or os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_SOURCE")
+        or "external"
+    ).strip() or "external"
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=6)
+        headers = {"Accept": "application/json, text/html;q=0.9, */*;q=0.8", "User-Agent": "Mozilla/5.0"}
+        if session is None:
+            async with aiohttp.ClientSession(timeout=timeout) as local_session:
+                async with local_session.get(str(url), headers=headers) as response:
+                    response.raise_for_status()
+                    response_headers = getattr(response, "headers", {}) or {}
+                    if hasattr(response_headers, "get"):
+                        content_type = response_headers.get("Content-Type", "")
+                    else:
+                        content_type = ""
+                    if "application/json" in str(content_type).lower():
+                        payload = await response.json(content_type=None)
+                        temperature_c = _extract_temperature_from_payload(payload)
+                    else:
+                        text = await response.text()
+                        temperature_c = _extract_temperature_from_chmi_html(text)
+        else:
+            async with session.get(str(url), headers=headers) as response:
+                response.raise_for_status()
+                response_headers = getattr(response, "headers", {}) or {}
+                if hasattr(response_headers, "get"):
+                    content_type = response_headers.get("Content-Type", "")
+                else:
+                    content_type = ""
+                if "application/json" in str(content_type).lower():
+                    payload = await response.json(content_type=None)
+                    temperature_c = _extract_temperature_from_payload(payload)
+                else:
+                    text = await response.text()
+                    temperature_c = _extract_temperature_from_chmi_html(text)
+    except Exception as exc:
+        logger.warning("Nepodařilo se načíst externí teplotu z %s: %s", url, exc)
+        return None, "forecast"
+
+    if temperature_c is None:
+        logger.warning("Externí zdroj teploty %s nevrátil platnou hodnotu", url)
+        return None, "forecast"
+
+    return round(float(temperature_c), 1), source_label
+
+
+async def _resolve_current_temperature(
+    config: dict,
+    hourly: list[dict],
+    session: aiohttp.ClientSession | None = None,
+) -> tuple[float | None, str]:
+    """Resolve current temperature from explicit override or fallback forecast.
+
+    The application now supports an explicit current temperature value from an
+    external source such as ESP32 or a weather station. If none is supplied,
+    the first hourly forecast point is used as a safe fallback so the UI and
+    automation still keep working.
+    """
+    external_temperature_c, external_source = await _fetch_external_current_temperature(config, session=session)
+    if external_temperature_c is not None:
+        return external_temperature_c, external_source
+
+    if hourly:
+        try:
+            return float(hourly[0].get("temp_c", 0.0)), "forecast"
+        except (TypeError, ValueError):
+            return None, "forecast"
+
+    return None, "forecast"
 
 
 def save_weather_cache(data: dict) -> None:
@@ -234,6 +402,26 @@ async def _fetch_weather_data(config: dict) -> dict:
             for d in _daily_map.values()
         ]
 
+        current_temperature_c, current_temperature_source = await _resolve_current_temperature(
+            config,
+            hourly,
+            session=session,
+        )
+        current_point = None
+        if hourly:
+            current_point = dict(hourly[0])
+        elif current_temperature_c is not None:
+            current_point = {
+                "temp_c": round(float(current_temperature_c), 1),
+                "time_label": "now",
+                "date_label": datetime.now().astimezone().strftime("%d.%m."),
+            }
+
+        if current_point is not None and current_temperature_c is not None:
+            current_point["temp_c"] = round(float(current_temperature_c), 1)
+            current_point["current_temperature_c"] = round(float(current_temperature_c), 1)
+            current_point["current_temperature_source"] = current_temperature_source
+
         return {
             "enabled": True,
             "location": location,
@@ -241,7 +429,10 @@ async def _fetch_weather_data(config: dict) -> dict:
             "sensor_offset_c": sensor_offset,
             "horizon_hours": horizon_h,
             "fetched_at": now_utc.isoformat(),
-            "current": hourly[0] if hourly else None,
+            "current": current_point,
+            "current_temperature_c": current_temperature_c,
+            "current_temperature_source": current_temperature_source,
+            "forecast_3h": hourly[: min(3, len(hourly))],
             "hourly": hourly,
             "daily": daily,
         }
@@ -255,6 +446,9 @@ async def _fetch_weather_data(config: dict) -> dict:
             "fetched_at": None,
             "error": f"Nepodařilo se stáhnout data: {exc}",
             "current": None,
+            "current_temperature_c": None,
+            "current_temperature_source": "forecast",
+            "forecast_3h": [],
             "hourly": [],
         }
     except Exception:
@@ -266,6 +460,9 @@ async def _fetch_weather_data(config: dict) -> dict:
             "fetched_at": None,
             "error": "Interní chyba serveru",
             "current": None,
+            "current_temperature_c": None,
+            "current_temperature_source": "forecast",
+            "forecast_3h": [],
             "hourly": [],
         }
 

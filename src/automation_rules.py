@@ -48,6 +48,9 @@ DEFAULT_AUTOMATION_RULES: dict[str, Any] = {
         "comfort_margin_c": 1.0,
         "prefer_aladin_model": True,
         "adjust_mode_by_forecast": True,
+        "current_temperature_c": None,
+        "current_temperature_source": "external",
+        "current_temperature_url": None,
     },
 }
 

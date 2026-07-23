@@ -59,6 +59,8 @@ class WeatherForecastSnapshot:
         location_label: User-facing location label.
         intervals: Parsed forecast intervals.
         source_files: Source JSON filenames used for this snapshot.
+        current_temperature_c: Optional explicit current temperature.
+        current_temperature_source: Optional source label for current temperature.
     """
 
     fetched_at_utc: datetime
@@ -68,6 +70,8 @@ class WeatherForecastSnapshot:
     location_label: str
     intervals: tuple[WeatherForecastInterval, ...]
     source_files: tuple[str, ...]
+    current_temperature_c: float | None = None
+    current_temperature_source: str | None = None
 
     def horizon_intervals(self, now_local: datetime, horizon_hours: int) -> tuple[WeatherForecastInterval, ...]:
         """Return forecast intervals that overlap requested horizon.
@@ -575,31 +579,31 @@ def compute_horizon_temperature_extremes(
     return min_temp, max_temp
 
 
-def estimate_current_outdoor_temperature(
-    snapshot: WeatherForecastSnapshot | None,
+def _estimate_current_temperature_from_intervals(
+    intervals: tuple[WeatherForecastInterval, ...] | list[WeatherForecastInterval],
     now_local: datetime,
 ) -> float | None:
-    """Estimate current outdoor temperature from CHMI forecast intervals.
+    """Estimate current outdoor temperature from forecast intervals.
 
     The value is derived from the interval overlapping current time.
     If no interval overlaps "now", the nearest interval in time is used.
 
     Args:
-        snapshot: Latest weather snapshot.
+        intervals: Forecast intervals to inspect.
         now_local: Current local time.
 
     Returns:
         float | None: Estimated outdoor temperature in Celsius.
     """
 
-    if snapshot is None or not snapshot.intervals:
+    if not intervals:
         return None
 
     now_utc = _to_utc(now_local)
 
     overlapping = [
         interval
-        for interval in snapshot.intervals
+        for interval in intervals
         if interval.start_time_utc <= now_utc < interval.end_time_utc
     ]
 
@@ -610,7 +614,7 @@ def estimate_current_outdoor_temperature(
             return interval.start_time_utc + ((interval.end_time_utc - interval.start_time_utc) / 2)
 
         candidates = sorted(
-            snapshot.intervals,
+            intervals,
             key=lambda interval: abs((_midpoint_utc(interval) - now_utc).total_seconds()),
         )
 
@@ -623,6 +627,36 @@ def estimate_current_outdoor_temperature(
             return float(interval.min_temp_c)
 
     return None
+
+
+def estimate_current_outdoor_temperature(
+    snapshot: WeatherForecastSnapshot | None,
+    now_local: datetime,
+) -> float | None:
+    """Estimate current outdoor temperature from the best available source.
+
+    Explicit values (for example from an external sensor or a future ESP32 feed)
+    take precedence. If no explicit value exists, the function falls back to the
+    forecast interval overlapping current time.
+
+    Args:
+        snapshot: Latest weather snapshot.
+        now_local: Current local time.
+
+    Returns:
+        float | None: Estimated or measured outdoor temperature in Celsius.
+    """
+
+    if snapshot is None:
+        return None
+
+    if snapshot.current_temperature_c is not None:
+        return float(snapshot.current_temperature_c)
+
+    if not snapshot.intervals:
+        return None
+
+    return _estimate_current_temperature_from_intervals(snapshot.intervals, now_local)
 
 
 def _select_weather_fallback_mode(available_modes: set[str] | None) -> str | None:

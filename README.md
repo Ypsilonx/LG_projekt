@@ -129,7 +129,7 @@ python setup.py
 }]
 ```
 
-Volitelně `data/automation_rules.json` – sezóny, weather provider (POI, region), sensor offset.
+Volitelně `data/automation_rules.json` – sezóny, weather provider (POI, region), sensor offset, a také externí zdroj aktuální teploty. Stačí doplnit `weather.current_temperature_url` na endpoint vracející např. `{"temperature_c": 12.3}`; pokud je URL dostupná, aplikace použije tuto hodnotu před fallbackem na předpověď.
 
 > ⚠️ Nikdy necommitujte `config.json` ani `devices.json`!
 
