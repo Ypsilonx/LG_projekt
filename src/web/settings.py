@@ -13,6 +13,10 @@ Příklad viz soubor ``.env.example`` v kořeni projektu.
 import os
 from functools import lru_cache
 
+from env_config import load_local_env
+
+load_local_env()
+
 
 def _env_bool(name: str, default: bool) -> bool:
     """

@@ -9,8 +9,11 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from env_config import load_local_env
+
 # Zajistíme, že Python najde naše moduly
 sys.path.insert(0, str(Path(__file__).parent))
+load_local_env()
 from server_api import get_ac_device_id, get_device_id_by_alias, list_devices
 from command_policy import build_command_plan
 from command_executor import create_payload_for_step, apply_status_hint, execute_plan

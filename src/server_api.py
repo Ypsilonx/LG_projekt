@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 from thinqconnect import ThinQApi, ThinQAPIException, ThinQMQTTClient
 
+from env_config import load_local_env
+
 logger = logging.getLogger(__name__)
+load_local_env()
 
 
 class ThinQAPI:
