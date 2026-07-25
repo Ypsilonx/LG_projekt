@@ -1,8 +1,18 @@
 {% extends "base.html" %}
-{% block title %}LG Klimatizace{% endblock %}
+{% block title %}ThermoControl-LG-POER_app{% endblock %}
 
 {% block content %}
 <div x-data="dashboard" x-init="init()">
+
+    <!-- Toast notifikace -->
+    <div x-show="toastMessage"
+         x-transition
+         class="fixed top-16 right-4 z-50 max-w-sm px-4 py-2 rounded-lg border text-sm shadow-xl"
+         :class="toastType === 'error'
+             ? 'bg-red-950/95 border-red-700 text-red-200'
+             : 'bg-emerald-950/95 border-emerald-700 text-emerald-200'"
+         x-text="toastMessage">
+    </div>
 
     <!-- ═══════════════════════════════════════════════════════
          STATUS BAR
@@ -31,6 +41,12 @@
                 <span class="w-2 h-2 rounded-full transition-colors"
                       :class="wsConnected ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'"></span>
                 <span x-text="wsConnected ? 'Push' : 'Offline'"></span>
+            </span>
+            <!-- POER indikátor -->
+            <span class="flex items-center gap-1.5 text-xs flex-shrink-0"
+                :title="poerError ? ('POER: ' + poerError) : 'Stav POER termostatu'">
+                <span class="w-2 h-2 rounded-full transition-colors" :class="poerLedClass"></span>
+                <span :class="poerError ? 'text-red-400' : 'text-gray-500'" x-text="poerStatusLabel"></span>
             </span>
         </div>
 
@@ -279,9 +295,31 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════════════
+         OVLÁDÁNÍ ZAŘÍZENÍ – TABY LG / POER
+    ════════════════════════════════════════════════════════ -->
+    <div class="bg-gray-800 border border-gray-700 rounded-xl p-3 mb-4">
+        <div class="flex gap-2">
+            <button @click="controlTab = 'lg'"
+                    :class="controlTab === 'lg'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                    class="px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+                ❄️ LG klimatizace
+            </button>
+            <button @click="controlTab = 'poer'"
+                    :class="controlTab === 'poer'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                    class="px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+                🌡️ POER termostat
+            </button>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════
          3 SLOUPCE: MÓD | TEPLOTA | VENTILÁTOR
     ════════════════════════════════════════════════════════ -->
-    <div class="grid grid-cols-3 gap-4 mb-5">
+    <div x-show="controlTab === 'lg'" class="grid grid-cols-3 gap-4 mb-5">
 
         <!-- 1. Mód klimatizace -->
         <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
@@ -379,10 +417,105 @@
         </div>
     </div>
 
-    <!-- ═══════════════════════════════════════════════════════
-         SOUHRN + LOPATKY
-    ════════════════════════════════════════════════════════ -->
-    <div class="grid grid-cols-2 gap-4 mb-6">
+        <!-- ═══════════════════════════════════════════════════════
+            POER OVLÁDÁNÍ + SOUHRN + LOPATKY
+        ════════════════════════════════════════════════════════ -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+
+        <!-- POER termostat -->
+        <div x-show="controlTab === 'poer'" class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+            <div class="flex items-center justify-between mb-3">
+                <div class="text-xs text-gray-500 uppercase tracking-wider">POER termostat</div>
+                <button @click="loadPoerStatus()"
+                        :disabled="poerLoading"
+                        class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 transition-colors">
+                    🔄 Obnovit
+                </button>
+            </div>
+
+            <div class="space-y-2 text-sm mb-3">
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Aktuální</span>
+                    <span class="text-gray-200"
+                          x-text="poerCurrentTemp !== null ? poerCurrentTemp + '°C' : '—'"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Cílová</span>
+                    <span class="text-emerald-400 font-bold"
+                          x-text="poerTargetTemp !== null ? poerTargetTemp + '°C' : '—'"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Režim</span>
+                    <span class="text-gray-200" x-text="poerMode ? poerMode.toUpperCase() : '—'"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Předvolba</span>
+                    <span class="text-gray-200" x-text="poerPreset ? poerPreset.toUpperCase() : '—'"></span>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <div class="text-xs text-gray-500 mb-2">Režim</div>
+                <div class="grid grid-cols-3 gap-2">
+                    <button @click="applyPoerMode('auto', poerPreset || 'home')"
+                            :disabled="poerLoading"
+                            :class="poerMode === 'auto' ? 'bg-blue-600 text-white border-blue-500' : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'"
+                            class="py-2 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40">
+                        AUTO
+                    </button>
+                    <button @click="applyPoerMode('heat', poerPreset || 'home')"
+                            :disabled="poerLoading"
+                            :class="poerMode === 'heat' ? 'bg-orange-600 text-white border-orange-500' : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'"
+                            class="py-2 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40">
+                        HEAT
+                    </button>
+                    <button @click="applyPoerMode('off', poerPreset || 'home')"
+                            :disabled="poerLoading"
+                            :class="poerMode === 'off' ? 'bg-red-700 text-white border-red-600' : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'"
+                            class="py-2 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40">
+                        OFF
+                    </button>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <div class="text-xs text-gray-500 mb-2">Předvolba</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button @click="applyPoerMode(poerMode || 'auto', 'home')"
+                            :disabled="poerLoading"
+                            :class="poerPreset !== 'away' ? 'bg-emerald-700 text-white border-emerald-600' : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'"
+                            class="py-2 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40">
+                        HOME
+                    </button>
+                    <button @click="applyPoerMode(poerMode || 'auto', 'away')"
+                            :disabled="poerLoading"
+                            :class="poerPreset === 'away' ? 'bg-amber-700 text-white border-amber-600' : 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600'"
+                            class="py-2 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40">
+                        AWAY
+                    </button>
+                </div>
+            </div>
+
+            <div>
+                <div class="text-xs text-gray-500 mb-2">Cílová teplota</div>
+                <div class="flex items-center gap-2">
+                    <input type="number"
+                           x-model.number="poerSetTemp"
+                           :min="poerTempMin"
+                           :max="poerTempMax"
+                           step="0.5"
+                           class="w-full bg-gray-700 border border-gray-600 rounded-lg px-2 py-2 text-sm text-gray-100">
+                    <button @click="applyPoerTemperature()"
+                            :disabled="poerLoading || poerSetTemp === null"
+                            class="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-semibold text-white transition-colors disabled:opacity-40">
+                        Nastavit
+                    </button>
+                </div>
+                <div class="text-[11px] text-gray-600 mt-1"
+                     x-text="'Rozsah: ' + poerTempMin + '–' + poerTempMax + '°C'"></div>
+                <div x-show="poerError" class="text-[11px] text-red-400 mt-1" x-text="poerError"></div>
+            </div>
+        </div>
 
         <!-- Souhrn nastavení -->
         <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
@@ -1020,6 +1153,16 @@ document.addEventListener('alpine:init', () => {
         loadingForecast: false,
         forecastError:  null,
 
+        // ── POER ─────────────────────────────────────────────────────
+        poerStatus:      {},
+        poerLoading:     false,
+        poerError:       null,
+        poerSetTemp:     null,
+        controlTab:      'lg',
+        toastMessage:    '',
+        toastType:       'success',
+        _toastTimer:     null,
+
         // ── Spodní panel ──────────────────────────────────────────────
         bottomTab: 'auto',
 
@@ -1084,14 +1227,44 @@ document.addEventListener('alpine:init', () => {
             return Math.round(t * 10) / 10;
         },
         get poerCurrentTemp() {
+            const live = this.poerStatus?.current_temperature_c;
+            if (live !== null && live !== undefined) return Math.round(live * 10) / 10;
             const t = this.weatherConfig?.poer_current_temperature_c;
             if (t === null || t === undefined) return null;
             return Math.round(t * 10) / 10;
         },
         get poerTargetTemp() {
+            const live = this.poerStatus?.target_temperature_c;
+            if (live !== null && live !== undefined) return Math.round(live * 10) / 10;
             const t = this.weatherConfig?.poer_target_temperature_c;
             if (t === null || t === undefined) return null;
             return Math.round(t * 10) / 10;
+        },
+        get poerMode() {
+            return this.poerStatus?.mode || null;
+        },
+        get poerPreset() {
+            return this.poerStatus?.preset || 'home';
+        },
+        get poerTempMin() {
+            const v = this.poerStatus?.temperature_min_c;
+            return v !== null && v !== undefined ? Number(v) : 5;
+        },
+        get poerTempMax() {
+            const v = this.poerStatus?.temperature_max_c;
+            return v !== null && v !== undefined ? Number(v) : 35;
+        },
+        get poerStatusLabel() {
+            if (this.poerError) return 'POER chyba';
+            if (this.poerMode === 'off') return 'POER vypnuto';
+            if (this.poerCurrentTemp !== null || this.poerTargetTemp !== null) return 'POER aktivní';
+            return 'POER neznámý';
+        },
+        get poerLedClass() {
+            if (this.poerError) return 'bg-orange-500 animate-pulse';
+            if (this.poerMode === 'off') return 'bg-red-500';
+            if (this.poerCurrentTemp !== null || this.poerTargetTemp !== null) return 'bg-emerald-500';
+            return 'bg-gray-500';
         },
         get currentTempSource() {
             return this.weatherConfig?.indoor_temperature_source || 'ac_builtin_sensor_proxy';
@@ -1156,6 +1329,7 @@ document.addEventListener('alpine:init', () => {
             }
             this.connectWS();
             this.loadWeatherConfig();
+            this.loadPoerStatus();
             this.loadForecast();
             this.loadEnergy();
             this.loadTodayEnergy();
@@ -1225,8 +1399,93 @@ document.addEventListener('alpine:init', () => {
         async loadWeatherConfig() {
             try {
                 const r = await fetch('/api/weather/config');
-                if (r.ok) this.weatherConfig = await r.json();
+                if (r.ok) {
+                    this.weatherConfig = await r.json();
+                    if (this.poerSetTemp === null && this.poerTargetTemp !== null) {
+                        this.poerSetTemp = this.poerTargetTemp;
+                    }
+                }
             } catch (_) {}
+        },
+
+        async loadPoerStatus() {
+            this.poerLoading = true;
+            this.poerError = null;
+            try {
+                const r = await fetch('/api/poer/status');
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    this.poerError = d.detail || 'Nepodařilo se načíst stav POER';
+                    return;
+                }
+                this.poerStatus = d || {};
+                if (this.poerTargetTemp !== null) this.poerSetTemp = this.poerTargetTemp;
+            } catch (_) {
+                this.poerError = 'Chyba připojení k API POER';
+            } finally {
+                this.poerLoading = false;
+            }
+        },
+
+        async applyPoerMode(mode, preset) {
+            this.poerLoading = true;
+            this.poerError = null;
+            try {
+                const r = await fetch('/api/poer/command/set-mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode, preset }),
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    this.poerError = d.detail || 'POER příkaz set-mode selhal';
+                    this.showToast(this.poerError, 'error');
+                    return;
+                }
+                this.showToast('POER režim byl nastaven.');
+                await Promise.all([this.loadPoerStatus(), this.loadWeatherConfig()]);
+            } catch (_) {
+                this.poerError = 'Chyba připojení při set-mode';
+                this.showToast(this.poerError, 'error');
+            } finally {
+                this.poerLoading = false;
+            }
+        },
+
+        async applyPoerTemperature() {
+            if (this.poerSetTemp === null || this.poerSetTemp === undefined) return;
+            const value = Math.max(this.poerTempMin, Math.min(this.poerTempMax, Number(this.poerSetTemp)));
+            this.poerLoading = true;
+            this.poerError = null;
+            try {
+                const r = await fetch('/api/poer/command/set-temperature', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ temperature: value }),
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    this.poerError = d.detail || 'POER příkaz set-temperature selhal';
+                    this.showToast(this.poerError, 'error');
+                    return;
+                }
+                this.showToast('POER cílová teplota byla nastavena.');
+                await Promise.all([this.loadPoerStatus(), this.loadWeatherConfig()]);
+            } catch (_) {
+                this.poerError = 'Chyba připojení při set-temperature';
+                this.showToast(this.poerError, 'error');
+            } finally {
+                this.poerLoading = false;
+            }
+        },
+
+        showToast(message, type = 'success') {
+            this.toastType = type;
+            this.toastMessage = message;
+            clearTimeout(this._toastTimer);
+            this._toastTimer = setTimeout(() => {
+                this.toastMessage = '';
+            }, 2600);
         },
 
         // ── Energie ───────────────────────────────────────────────────

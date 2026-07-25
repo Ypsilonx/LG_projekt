@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 from datetime import datetime
 from tkinter import messagebox
@@ -157,6 +158,69 @@ class DeviceRuntimeMixin:
                 self.after(0, lambda msg=error_msg: messagebox.showerror("Chyba", f"Příkaz {command} selhal: {msg}"))
 
         threading.Thread(target=handle_result, daemon=True).start()
+
+    def handle_poer_command(self, command, *args):
+        """Zpracování příkazů pro POER termostat."""
+        logger.info(f"Příkaz POER: {command}, parametry: {args}")
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._execute_poer_command(command, *args),
+            self.loop,
+        )
+
+        def handle_result():
+            try:
+                future.result(timeout=12)
+            except Exception as e:
+                logger.error(f"Chyba při provádění POER příkazu {command}: {e}")
+                error_msg = str(e)
+                self.after(0, lambda msg=error_msg: messagebox.showerror("Chyba", f"POER příkaz {command} selhal: {msg}"))
+
+        threading.Thread(target=handle_result, daemon=True).start()
+
+    async def _execute_poer_command(self, command, *args):
+        """Asynchronni provadeni POER prikazu."""
+        from poer_api import send_poer_command
+
+        try:
+            if self._command_execution_lock is None:
+                self._command_execution_lock = asyncio.Lock()
+
+            async with self._command_execution_lock:
+                poer_api_key = os.getenv("LG_POER_API_KEY", "").strip()
+                if not poer_api_key:
+                    raise RuntimeError("Chybí LG_POER_API_KEY v prostředí.")
+
+                preferred_device_id = getattr(self, "poer_device_id", None)
+                if not preferred_device_id and hasattr(self, "automation_rules"):
+                    preferred_device_id = getattr(self.automation_rules.weather, "poer_device_id", None)
+
+                if command == "poer_set_temperature":
+                    endpoint = "set_temp"
+                    payload = {"temperature": float(args[0])}
+                elif command == "poer_set_mode":
+                    endpoint = "set_mode"
+                    payload = {"mode": str(args[0]).lower(), "preset": str(args[1]).lower()}
+                else:
+                    raise ValueError(f"Nepodporovaný POER příkaz: {command}")
+
+                result = await send_poer_command(
+                    api_key=poer_api_key,
+                    endpoint=endpoint,
+                    data=payload,
+                    preferred_device_id=preferred_device_id,
+                )
+
+                if not result.get("success"):
+                    raise RuntimeError(result.get("error_text") or "POER příkaz selhal.")
+
+                self.after(0, lambda: self.status_var.set("POER příkaz odeslán"))
+                if hasattr(self, "refresh_poer_data"):
+                    self.after(900, self.refresh_poer_data)
+
+        except Exception as e:
+            logger.error(f"Chyba při provádění POER příkazu {command}: {e}")
+            raise
 
     async def _execute_device_command(self, command, *args):
         """Asynchronni provadeni prikazu zarizeni."""
@@ -358,6 +422,8 @@ class DeviceRuntimeMixin:
                 self.info_panel.update_status(device_status)
 
             self._refresh_weather_visualization(datetime.now())
+            if hasattr(self, '_update_poer_summary'):
+                self._update_poer_summary()
 
         except Exception as e:
             logger.error(f"Chyba při aktualizaci GUI: {e}")

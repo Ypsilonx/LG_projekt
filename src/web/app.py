@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FastAPI webová aplikace pro LG ThinQ Klimatizace.
+FastAPI webová aplikace ThermoControl-LG-POER_app.
 
 Hlavní vstupní bod webového serveru:
 - Inicializuje sdílené prostředky (ThinQAPI, MQTT) přes lifespan.
@@ -36,6 +36,7 @@ from web.routes.mode import router as mode_router
 from web.routes.weather import router as weather_router
 from web.routes.schedule import router as schedule_router
 from web.routes.energy import router as energy_router
+from web.routes.poer import router as poer_router
 
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
@@ -404,8 +405,8 @@ if not _settings.auth_is_cloudflare:
     )
 
 app = FastAPI(
-    title="LG Klimatizace",
-    description="Webové rozhraní pro ovládání LG ThinQ klimatizace",
+    title="ThermoControl-LG-POER_app",
+    description="Webové rozhraní pro ovládání klimatizace, POER termostatu a plánování",
     version="1.0.0",
     lifespan=lifespan,
     # Swagger UI / ReDoc se v produkci vypne (LG_DOCS_ENABLED=false).
@@ -437,6 +438,7 @@ app.include_router(mode_router)
 app.include_router(weather_router)
 app.include_router(schedule_router)
 app.include_router(energy_router)
+app.include_router(poer_router)
 
 
 # ---------------------------------------------------------------------------

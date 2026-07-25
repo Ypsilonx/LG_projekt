@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Vlastní tkinter widgets pro LG ThinQ aplikaci.
+Vlastní tkinter widgets pro ThermoControl-LG-POER_app.
 Obsahuje LED indikátor, EnergyPanel, WeatherForecastPanel a další GUI komponenty.
 """
 import tkinter as tk

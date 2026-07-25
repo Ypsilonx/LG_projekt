@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Modul pro základní ovládací prvky klimatizace.
+Modul pro základní ovládací prvky klimatizace a POER termostatu.
 Obsahuje widgety pro zapnutí/vypnutí, změnu módu, teploty, větru apod.
 """
 import tkinter as tk
@@ -114,6 +114,8 @@ class ClimateControls(ttk.Frame):
         # Směr větru s rozšířenými možnostmi
         self.wind_direction_frame = ttk.LabelFrame(self.advanced_controls_container, text="🌀 Směr větru", padding=10)
         self.wind_direction_frame.pack(pady=10, padx=20, fill='x')
+        # Proudění vzduchu zatím v GUI skrýváme; kód necháváme připravený pro další krok.
+        self.wind_direction_frame.pack_forget()
         
         # Automatické otáčení
         auto_rotate_frame = ttk.Frame(self.wind_direction_frame)
@@ -487,3 +489,194 @@ class InfoPanel(ttk.Frame):
         self.run_state_label.config(text=f"Stav systému: {run_state}")
         self.wind_detail_info.config(text=f"Detail proudění: {wind_detail}")
         self.temp_unit_label.config(text=f"Jednotka: °{temp_unit}")
+
+
+class POERStatusPanel(ttk.Frame):
+    """Panel pro stav POER termostatu a ruční obnovení dat."""
+
+    def __init__(self, parent, on_refresh=None, on_command=None):
+        super().__init__(parent)
+        self.on_refresh = on_refresh
+        self.on_command = on_command
+        self.current_temp_var = tk.StringVar(value="Aktuální teplota: --")
+        self.target_temp_var = tk.StringVar(value="Cílová teplota: --")
+        self.device_id_var = tk.StringVar(value="Zařízení: --")
+        self.status_var = tk.StringVar(value="Stav: čekám na data")
+        self.humidity_var = tk.StringVar(value="Vlhkost: --")
+        self.mode_info_var = tk.StringVar(value="Režim: -- | Předvolba: -- | Akce: --")
+        self.mode_var = tk.StringVar(value="AUTO")
+        self.preset_var = tk.StringVar(value="HOME")
+        self.target_temp_scale_var = tk.DoubleVar(value=21.0)
+        self._min_temp = 5.0
+        self._max_temp = 35.0
+        self.note_var = tk.StringVar(
+            value="Ovládací pointy POER jsou připravené: režim, předvolba a cílová teplota."
+        )
+        self.create_widgets()
+
+    def create_widgets(self):
+        """Vytvoření obsahu POER panelu."""
+        panel = ttk.LabelFrame(self, text="🌡️ POER termostat", padding=10)
+        panel.pack(pady=10, padx=20, fill='x')
+
+        ttk.Label(panel, textvariable=self.current_temp_var, font=("Segoe UI", 10, "bold")).pack(
+            anchor='w', pady=1
+        )
+        ttk.Label(panel, textvariable=self.target_temp_var, font=("Segoe UI", 10)).pack(
+            anchor='w', pady=1
+        )
+        ttk.Label(panel, textvariable=self.humidity_var, font=("Segoe UI", 9)).pack(
+            anchor='w', pady=1
+        )
+        ttk.Label(panel, textvariable=self.mode_info_var, font=("Segoe UI", 9)).pack(
+            anchor='w', pady=1
+        )
+        ttk.Label(panel, textvariable=self.device_id_var, font=("Segoe UI", 9)).pack(
+            anchor='w', pady=1
+        )
+        ttk.Label(panel, textvariable=self.status_var, font=("Segoe UI", 9)).pack(
+            anchor='w', pady=(4, 2)
+        )
+
+        controls_frame = ttk.LabelFrame(panel, text="Ovládání POER", padding=10)
+        controls_frame.pack(fill='x', pady=(6, 0))
+
+        mode_row = ttk.Frame(controls_frame)
+        mode_row.pack(fill='x', pady=(0, 6))
+        ttk.Label(mode_row, text="Režim:").pack(side=tk.LEFT, padx=(0, 6))
+        self.mode_combo = ttk.Combobox(
+            mode_row,
+            values=["AUTO", "HEAT", "OFF"],
+            textvariable=self.mode_var,
+            state="readonly",
+            width=12,
+        )
+        self.mode_combo.pack(side=tk.LEFT)
+        ttk.Label(mode_row, text="Předvolba:").pack(side=tk.LEFT, padx=(12, 6))
+        self.preset_combo = ttk.Combobox(
+            mode_row,
+            values=["HOME", "AWAY"],
+            textvariable=self.preset_var,
+            state="readonly",
+            width=12,
+        )
+        self.preset_combo.pack(side=tk.LEFT)
+        ttk.Button(mode_row, text="Nastavit režim", command=self._apply_mode).pack(side=tk.LEFT, padx=(12, 0))
+
+        temp_row = ttk.Frame(controls_frame)
+        temp_row.pack(fill='x')
+        ttk.Label(temp_row, text="Cílová teplota:").pack(anchor='w')
+
+        self.target_temp_label = ttk.Label(temp_row, text="Cíl: 21.0°C", font=("Segoe UI", 10))
+        self.target_temp_label.pack(anchor='w', pady=(2, 2))
+
+        self.target_temp_scale = ttk.Scale(
+            temp_row,
+            from_=5.0,
+            to=35.0,
+            variable=self.target_temp_scale_var,
+            orient=tk.HORIZONTAL,
+            length=320,
+            command=self._update_target_temp_label,
+        )
+        self.target_temp_scale.pack(fill='x', pady=(0, 2))
+
+        temp_buttons = ttk.Frame(temp_row)
+        temp_buttons.pack(fill='x', pady=(4, 0))
+        ttk.Button(temp_buttons, text="Nastavit teplotu", command=self._apply_temperature).pack(side=tk.LEFT)
+
+        button_row = ttk.Frame(panel)
+        button_row.pack(fill='x', pady=(6, 0))
+        ttk.Button(button_row, text="🔄 Obnovit data", command=self._refresh).pack(side=tk.LEFT)
+
+        self._update_target_temp_label(self.target_temp_scale_var.get())
+
+        ttk.Label(
+            panel,
+            textvariable=self.note_var,
+            font=("Segoe UI", 9),
+            foreground="#999999",
+            wraplength=520,
+            justify='left',
+        ).pack(anchor='w', pady=(8, 0))
+
+    def _refresh(self):
+        """Spustí externí refresh, pokud je zadaný."""
+        if self.on_refresh:
+            self.on_refresh()
+
+    def _apply_mode(self):
+        """Odešle změnu režimu a předvolby do POER cloudu."""
+        if self.on_command:
+            self.on_command("poer_set_mode", self.mode_var.get(), self.preset_var.get())
+
+    def _apply_temperature(self):
+        """Odešle změnu cílové teploty do POER cloudu."""
+        if self.on_command:
+            self.on_command("poer_set_temperature", self.target_temp_scale_var.get())
+
+    def _update_target_temp_label(self, value):
+        """Aktualizuje zobrazenou cílovou teplotu."""
+        temp = round(float(value) * 2) / 2
+        self.target_temp_scale_var.set(temp)
+        self.target_temp_label.config(text=f"Cíl: {temp:.1f}°C")
+
+    def show_loading(self):
+        """Zobrazí průběžný stav při obnově dat."""
+        self.status_var.set("Stav: načítám data z POER cloudu...")
+
+    def update_status(
+        self,
+        current_temperature_c: float | None = None,
+        current_humidity_pct: float | None = None,
+        target_temperature_c: float | None = None,
+        device_id: str | None = None,
+        mode: str | None = None,
+        preset: str | None = None,
+        action: str | None = None,
+        min_temp_c: float | None = None,
+        max_temp_c: float | None = None,
+        error_text: str | None = None,
+    ):
+        """Aktualizuje hodnoty z POER cloudu."""
+        if min_temp_c is not None:
+            self._min_temp = float(min_temp_c)
+        if max_temp_c is not None:
+            self._max_temp = float(max_temp_c)
+        self.target_temp_scale.configure(from_=self._min_temp, to=self._max_temp)
+
+        if current_temperature_c is None:
+            self.current_temp_var.set("Aktuální teplota: --")
+        else:
+            self.current_temp_var.set(f"Aktuální teplota: {float(current_temperature_c):.1f}°C")
+
+        if current_humidity_pct is None:
+            self.humidity_var.set("Vlhkost: --")
+        else:
+            self.humidity_var.set(f"Vlhkost: {float(current_humidity_pct):.1f}%")
+
+        if target_temperature_c is None:
+            self.target_temp_var.set("Cílová teplota: --")
+        else:
+            self.target_temp_var.set(f"Cílová teplota: {float(target_temperature_c):.1f}°C")
+            self.target_temp_scale_var.set(float(target_temperature_c))
+            self._update_target_temp_label(target_temperature_c)
+
+        device_text = device_id[:8] + "..." if device_id else "--"
+        self.device_id_var.set(f"Zařízení: {device_text}")
+
+        self.mode_info_var.set(
+            f"Režim: {mode or '--'} | Předvolba: {preset or '--'} | Akce: {action or '--'}"
+        )
+
+        if mode:
+            self.mode_var.set(mode.upper())
+        if preset:
+            self.preset_var.set(preset.upper())
+
+        if error_text:
+            self.status_var.set(f"Stav: {error_text}")
+        elif current_temperature_c is None and target_temperature_c is None:
+            self.status_var.set("Stav: data zatím nejsou k dispozici")
+        else:
+            self.status_var.set("Stav: OK")

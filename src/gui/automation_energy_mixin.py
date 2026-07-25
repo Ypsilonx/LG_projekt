@@ -276,6 +276,43 @@ class AutomationEnergyMixin:
         except (TypeError, ValueError):
             return None
 
+    async def _fetch_poer_snapshot(self, session):
+        """Stáhne aktuální stav POER termostatu, pokud je k dispozici klíč."""
+        weather_cfg = self.automation_rules.weather
+        poer_api_key = os.getenv("LG_POER_API_KEY", "").strip()
+        if not poer_api_key:
+            return {
+                "poer_temperature_c": None,
+                "poer_current_humidity_pct": None,
+                "poer_target_temperature_c": None,
+                "poer_device_id": None,
+                "poer_hvac_mode": None,
+                "poer_preset_mode": None,
+                "poer_action": None,
+                "poer_min_temp_c": None,
+                "poer_max_temp_c": None,
+                "poer_error": "POER: chybi LG_POER_API_KEY",
+            }
+
+        poer_status = await fetch_poer_status(
+            api_key=poer_api_key,
+            preferred_device_id=weather_cfg.poer_device_id,
+            session=session,
+        )
+
+        return {
+            "poer_temperature_c": poer_status.get("current_temperature_c"),
+            "poer_current_humidity_pct": poer_status.get("current_humidity_pct"),
+            "poer_target_temperature_c": poer_status.get("target_temperature_c"),
+            "poer_device_id": poer_status.get("device_id"),
+            "poer_hvac_mode": poer_status.get("mode"),
+            "poer_preset_mode": poer_status.get("preset"),
+            "poer_action": poer_status.get("action"),
+            "poer_min_temp_c": poer_status.get("min_temp_c"),
+            "poer_max_temp_c": poer_status.get("max_temp_c"),
+            "poer_error": poer_status.get("error_text"),
+        }
+
     def _extract_current_power_w(self):
         """Vrati aktualni prikon ve wattech, pokud ho API vystavi.
 
@@ -502,31 +539,11 @@ class AutomationEnergyMixin:
             else:
                 raise RuntimeError(f"Nepodporovany weather provider: {weather_cfg.provider}")
 
-            poer_temperature_c = None
-            poer_target_temperature_c = None
-            poer_device_id = None
-            poer_error = None
-            if weather_cfg.indoor_current_temperature_source == "poer_api":
-                poer_api_key = os.getenv("LG_POER_API_KEY", "").strip()
-                if not poer_api_key:
-                    poer_error = "POER: chybi LG_POER_API_KEY"
-                else:
-                    poer_status = await fetch_poer_status(
-                        api_key=poer_api_key,
-                        preferred_device_id=weather_cfg.poer_device_id,
-                        session=session,
-                    )
-                    poer_temperature_c = poer_status.get("current_temperature_c")
-                    poer_target_temperature_c = poer_status.get("target_temperature_c")
-                    poer_device_id = poer_status.get("device_id")
-                    poer_error = poer_status.get("error_text")
+            poer_snapshot = await self._fetch_poer_snapshot(session)
 
             return {
                 "weather_snapshot": weather_snapshot,
-                "poer_temperature_c": poer_temperature_c,
-                "poer_target_temperature_c": poer_target_temperature_c,
-                "poer_device_id": poer_device_id,
-                "poer_error": poer_error,
+                **poer_snapshot,
             }
 
     def _on_weather_refresh_finished(self, future):
@@ -540,6 +557,87 @@ class AutomationEnergyMixin:
 
         self.after(0, lambda s=snapshot, e=error_text: self._complete_weather_refresh(s, e))
 
+    def refresh_poer_data(self):
+        """Spusti samostatny refresh POER statusu."""
+        if getattr(self, "poer_refresh_in_progress", False):
+            return False
+
+        self.poer_refresh_in_progress = True
+        if hasattr(self, "poer_panel"):
+            self.poer_panel.show_loading()
+
+        future = asyncio.run_coroutine_threadsafe(self._refresh_poer_snapshot_async(), self.loop)
+        future.add_done_callback(self._on_poer_refresh_finished)
+        return True
+
+    async def _refresh_poer_snapshot_async(self):
+        """Stáhne stav POER termostatu bez vazby na weather refresh."""
+        timeout = aiohttp.ClientTimeout(total=12)
+        session_headers = {
+            "Accept": "application/json",
+            "User-Agent": "LG-Projekt-WeatherClient/1.0 (+local-app)",
+        }
+
+        async with aiohttp.ClientSession(timeout=timeout, headers=session_headers) as session:
+            return await self._fetch_poer_snapshot(session)
+
+    def _on_poer_refresh_finished(self, future):
+        """Dokonci POER refresh ve vlakne GUI po async stazeni."""
+        try:
+            snapshot = future.result()
+            error_text = None
+        except Exception as exc:
+            snapshot = None
+            error_text = str(exc)
+
+        self.after(0, lambda s=snapshot, e=error_text: self._complete_poer_refresh(s, e))
+
+    def _complete_poer_refresh(self, snapshot, error_text):
+        """Aplikuje vysledek POER refresh a obnovi souhrn."""
+        self.poer_refresh_in_progress = False
+
+        poer_temperature_c = None
+        poer_current_humidity_pct = None
+        poer_target_temperature_c = None
+        poer_device_id = None
+        poer_hvac_mode = None
+        poer_preset_mode = None
+        poer_action = None
+        poer_min_temp_c = None
+        poer_max_temp_c = None
+        poer_error = None
+
+        if error_text:
+            poer_error = error_text
+            logger.warning("⚠️ POER refresh selhal: %s", error_text)
+        elif isinstance(snapshot, dict):
+            poer_temperature_c = snapshot.get("poer_temperature_c")
+            poer_current_humidity_pct = snapshot.get("poer_current_humidity_pct")
+            poer_target_temperature_c = snapshot.get("poer_target_temperature_c")
+            poer_device_id = snapshot.get("poer_device_id")
+            poer_hvac_mode = snapshot.get("poer_hvac_mode")
+            poer_preset_mode = snapshot.get("poer_preset_mode")
+            poer_action = snapshot.get("poer_action")
+            poer_min_temp_c = snapshot.get("poer_min_temp_c")
+            poer_max_temp_c = snapshot.get("poer_max_temp_c")
+            poer_error = snapshot.get("poer_error")
+
+        self.poer_indoor_temperature_c = poer_temperature_c
+        self.poer_current_humidity_pct = poer_current_humidity_pct
+        self.poer_target_temperature_c = poer_target_temperature_c
+        self.poer_device_id = poer_device_id
+        self.poer_hvac_mode = poer_hvac_mode
+        self.poer_preset_mode = poer_preset_mode
+        self.poer_action = poer_action
+        self.poer_min_temp_c = poer_min_temp_c
+        self.poer_max_temp_c = poer_max_temp_c
+        self.poer_error = poer_error
+
+        if poer_error:
+            logger.warning("⚠️ %s", poer_error)
+
+        self._update_poer_summary()
+
     def _complete_weather_refresh(self, snapshot, error_text):
         """Aplikuje vysledek weather refresh a obnovi automation panel."""
         self.weather_refresh_in_progress = False
@@ -550,21 +648,40 @@ class AutomationEnergyMixin:
         else:
             weather_snapshot = snapshot
             poer_temperature_c = None
+            poer_current_humidity_pct = None
             poer_target_temperature_c = None
             poer_device_id = None
+            poer_hvac_mode = None
+            poer_preset_mode = None
+            poer_action = None
+            poer_min_temp_c = None
+            poer_max_temp_c = None
             poer_error = None
 
             if isinstance(snapshot, dict) and "weather_snapshot" in snapshot:
                 weather_snapshot = snapshot.get("weather_snapshot")
                 poer_temperature_c = snapshot.get("poer_temperature_c")
+                poer_current_humidity_pct = snapshot.get("poer_current_humidity_pct")
                 poer_target_temperature_c = snapshot.get("poer_target_temperature_c")
                 poer_device_id = snapshot.get("poer_device_id")
+                poer_hvac_mode = snapshot.get("poer_hvac_mode")
+                poer_preset_mode = snapshot.get("poer_preset_mode")
+                poer_action = snapshot.get("poer_action")
+                poer_min_temp_c = snapshot.get("poer_min_temp_c")
+                poer_max_temp_c = snapshot.get("poer_max_temp_c")
                 poer_error = snapshot.get("poer_error")
 
             self.weather_snapshot = weather_snapshot
             self.poer_indoor_temperature_c = poer_temperature_c
+            self.poer_current_humidity_pct = poer_current_humidity_pct
             self.poer_target_temperature_c = poer_target_temperature_c
             self.poer_device_id = poer_device_id
+            self.poer_hvac_mode = poer_hvac_mode
+            self.poer_preset_mode = poer_preset_mode
+            self.poer_action = poer_action
+            self.poer_min_temp_c = poer_min_temp_c
+            self.poer_max_temp_c = poer_max_temp_c
+            self.poer_error = poer_error
             self.weather_last_refresh_at = datetime.now()
             self.weather_last_error = None
 
@@ -577,6 +694,7 @@ class AutomationEnergyMixin:
                 logger.warning("⚠️ %s", poer_error)
 
         self._refresh_automation_summary(current_time=datetime.now())
+        self._update_poer_summary()
 
     def _trigger_weather_refresh_if_due(self, current_time):
         """Spusti obnoveni weather cache podle nastaveneho intervalu."""

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Setup script pro inicializaci LG ThinQ projektu.
+Setup script pro inicializaci ThermoControl-LG-POER_app projektu.
 Zkopíruje šablony konfiguračních souborů a provede základní nastavení.
 """
 import shutil
@@ -17,7 +17,7 @@ def setup_project():
         ("automation_rules.json.example", "automation_rules.json"),
     ]
     
-    print("🚀 Inicializace LG ThinQ projektu...\n")
+    print("🚀 Inicializace ThermoControl-LG-POER_app projektu...\n")
     
     for example, target in configs:
         example_path = data_dir / example

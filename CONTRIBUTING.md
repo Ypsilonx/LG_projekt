@@ -1,4 +1,4 @@
-# Contributing to LG ThinQ Climate Control
+# Contributing to ThermoControl-LG-POER_app
 
 Děkujeme za váš zájem přispět do projektu! 🎉
 

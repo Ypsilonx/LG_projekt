@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Interaktivní CLI rozhraní pro ovládání LG ThinQ klimatizace.
+Interaktivní CLI rozhraní ThermoControl-LG-POER_app.
 Legacy modul – pro nové použití preferujte main.py s --mode cli.
 """
 import asyncio

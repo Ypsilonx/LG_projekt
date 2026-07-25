@@ -49,6 +49,26 @@ def setup_dark_theme(root):
                    background="#222222", 
                    foreground="#eeeeee",
                    font=("Segoe UI", 10, "bold"))
+
+    # Styly pro přepínací taby (LG/POER)
+    style.configure(
+        "TNotebook",
+        background="#222222",
+        borderwidth=0,
+        tabmargins=[2, 5, 2, 0],
+    )
+    style.configure(
+        "TNotebook.Tab",
+        background="#333333",
+        foreground="#cccccc",
+        padding=[12, 6],
+        font=("Segoe UI", 9, "bold"),
+    )
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", "#0078d4"), ("active", "#3b3b3b")],
+        foreground=[("selected", "#ffffff"), ("active", "#ffffff")],
+    )
     
     style.configure("Horizontal.TScale",
                    background="#222222",

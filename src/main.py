@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Hlavní vstupní bod pro LG ThinQ klimatizační aplikaci.
-Podporuje jak CLI, tak GUI režim s pokročilými funkcemi včetně plánování.
+Hlavní vstupní bod aplikace ThermoControl-LG-POER_app.
+Podporuje jak CLI, tak GUI a web režim s pokročilými funkcemi včetně plánování.
 """
 import sys
 import argparse
@@ -20,7 +20,7 @@ from command_executor import create_payload_for_step, apply_status_hint, execute
 
 def main():
     """Hlavní funkce aplikace"""
-    parser = argparse.ArgumentParser(description="LG ThinQ Klimatizace - Ovládání & Plánování")
+    parser = argparse.ArgumentParser(description="ThermoControl-LG-POER_app")
     parser.add_argument("--mode", choices=["gui", "cli", "web"], default="gui",
                        help="Režim spuštění: gui (výchozí), cli nebo web")
     parser.add_argument("--list-devices", action="store_true",
@@ -42,7 +42,7 @@ def main():
         run_web()
     elif args.mode == "cli":
         # CLI režim
-        print("LG ThinQ Klimatizace - CLI režim")
+        print("ThermoControl-LG-POER_app - CLI režim")
         
         if args.list_devices:
             cli_list_devices()
