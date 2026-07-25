@@ -251,7 +251,7 @@ class EnergyPanel(ttk.LabelFrame):
 
 
 class WeatherForecastPanel(ttk.LabelFrame):
-    """Panel s vizualizaci CHMI forecastu, venkovni teploty a korekce AC cidla.
+    """Panel s forecastem a docasnym odhadem interieru z AC cidla.
 
     Args:
         parent: Rodicovsky widget.
@@ -279,7 +279,7 @@ class WeatherForecastPanel(ttk.LabelFrame):
 
         self.meta_var = tk.StringVar(value="Zdroj: ČHMÚ Meteogram | čekám na data")
         self.outdoor_var = tk.StringVar(value="Venkovní teplota: nedostupná")
-        self.sensor_var = tk.StringVar(value="Teplota z AC cidla (s offsetem): nedostupna")
+        self.sensor_var = tk.StringVar(value="Odhad interieru z AC: nedostupna")
         self.summary_var = tk.StringVar(value="Forecast: čekám na první aktualizaci")
         self.status_var = tk.StringVar(value="")
 
@@ -346,7 +346,8 @@ class WeatherForecastPanel(ttk.LabelFrame):
         horizon_hours,
         outdoor_now_c,
         sensor_raw_c,
-        sensor_offset_c,
+        ac_indoor_temperature_proxy_offset_c,
+        sensor_source,
         last_refresh_local,
         last_error,
     ):
@@ -358,7 +359,9 @@ class WeatherForecastPanel(ttk.LabelFrame):
             horizon_hours: Delka forecast horizontu.
             outdoor_now_c: Odhad aktualni venkovni teploty.
             sensor_raw_c: Aktualni teplota z AC cidla.
-            sensor_offset_c: Korekce cidla v C.
+            ac_indoor_temperature_proxy_offset_c: Docasny proxy offset pro
+                odhad interierove teploty z AC cidla.
+            sensor_source: Zdroj indoor teploty (externi termostat nebo AC cidlo).
             last_refresh_local: Cas posledni uspesne aktualizace.
             last_error: Posledni chyba refreshu.
         """
@@ -372,14 +375,17 @@ class WeatherForecastPanel(ttk.LabelFrame):
 
         corrected_sensor_c = None
         if sensor_raw_c is not None:
-            corrected_sensor_c = sensor_raw_c + float(sensor_offset_c)
+            corrected_sensor_c = (
+                sensor_raw_c + float(ac_indoor_temperature_proxy_offset_c)
+            )
 
         if sensor_raw_c is None:
-            self.sensor_var.set("Teplota z AC cidla (s offsetem): nedostupna")
+            self.sensor_var.set("Indoor teplota: nedostupna")
         else:
-            self.sensor_var.set(
-                f"Teplota z AC cidla (s offsetem): {corrected_sensor_c:.1f}°C"
-            )
+            if sensor_source == "external_thermostat":
+                self.sensor_var.set(f"Indoor teplota (termostat): {sensor_raw_c:.1f}°C")
+            else:
+                self.sensor_var.set(f"Odhad interieru z AC: {corrected_sensor_c:.1f}°C")
 
         if snapshot is None:
             self.meta_var.set("Zdroj: ČHMÚ Meteogram (POI) | čekám na data")

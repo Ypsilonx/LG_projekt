@@ -260,12 +260,33 @@ class DeviceRuntimeMixin:
             power_operation = device_status.get("operation", {}).get("airConOperationMode", "POWER_OFF")
             mode = device_status.get("airConJobMode", {}).get("currentJobMode", "N/A")
             temp = device_status.get("temperature", {}).get("currentTemperature", "?")
-            sensor_offset_c = float(self.automation_rules.weather.sensor_offset_c)
-            corrected_temp = None
+            ac_target_temp = device_status.get("temperature", {}).get("targetTemperature")
+            weather_cfg = self.automation_rules.weather
+            ac_indoor_temperature_proxy_offset_c = float(
+                weather_cfg.ac_indoor_temperature_proxy_offset_c
+            )
+            estimated_indoor_temp = None
+            poer_indoor_temp = getattr(self, "poer_indoor_temperature_c", None)
+            poer_target_temp = getattr(self, "poer_target_temperature_c", None)
+            ac_sensor_temp = None
             try:
-                corrected_temp = float(temp) + sensor_offset_c
+                ac_sensor_temp = float(temp)
             except (TypeError, ValueError):
-                corrected_temp = None
+                ac_sensor_temp = None
+            if weather_cfg.indoor_current_temperature_source == "poer_api" and poer_indoor_temp is not None:
+                estimated_indoor_temp = float(poer_indoor_temp)
+                indoor_source_label = "teplota z termostatu POER"
+            elif weather_cfg.indoor_current_temperature_c is not None:
+                estimated_indoor_temp = float(weather_cfg.indoor_current_temperature_c)
+                indoor_source_label = "teplota z termostatu"
+            else:
+                indoor_source_label = "odhad interieru z AC"
+                try:
+                    estimated_indoor_temp = (
+                        float(temp) + ac_indoor_temperature_proxy_offset_c
+                    )
+                except (TypeError, ValueError):
+                    estimated_indoor_temp = None
 
             # Kombinace stavu pro display
             if power_operation == "POWER_ON" and run_state == "NORMAL":
@@ -281,12 +302,28 @@ class DeviceRuntimeMixin:
                 display_state = f"{power_operation}/{run_state}"
                 led_state = "error"
 
-            if corrected_temp is None:
+            if estimated_indoor_temp is None:
                 temp_text = "nedostupna"
             else:
-                temp_text = f"{corrected_temp:.1f}°C"
+                temp_text = f"{estimated_indoor_temp:.1f}°C"
 
-            status_text = f"Stav: {display_state}, Rezim: {mode}, Teplota (s offsetem): {temp_text}"
+            ac_sensor_text = "nedostupna" if ac_sensor_temp is None else f"{ac_sensor_temp:.1f}°C"
+            ac_target_text = (
+                f"{float(ac_target_temp):.1f}°C"
+                if isinstance(ac_target_temp, (int, float))
+                else "nedostupna"
+            )
+            poer_target_text = (
+                f"{float(poer_target_temp):.1f}°C"
+                if isinstance(poer_target_temp, (int, float))
+                else "nedostupna"
+            )
+
+            status_text = (
+                f"Stav: {display_state}, Rezim: {mode}, "
+                f"{indoor_source_label}: {temp_text}, AC čidlo: {ac_sensor_text}, "
+                f"Cíl AC: {ac_target_text}, Cíl POER: {poer_target_text}"
+            )
             self.status_var.set(status_text)
             self._update_live_state_header(device_status)
 
@@ -296,7 +333,23 @@ class DeviceRuntimeMixin:
 
             # Aktualizace vsech komponent
             if hasattr(self, 'climate_controls'):
-                self.climate_controls.update_status(device_status, sensor_offset_c=sensor_offset_c)
+                displayed_indoor_temp = weather_cfg.indoor_current_temperature_c
+                displayed_indoor_source = "ac_builtin_sensor"
+                if weather_cfg.indoor_current_temperature_source == "poer_api" and poer_indoor_temp is not None:
+                    displayed_indoor_temp = float(poer_indoor_temp)
+                    displayed_indoor_source = "external_thermostat"
+                elif weather_cfg.indoor_current_temperature_c is not None:
+                    displayed_indoor_source = "external_thermostat"
+
+                self.climate_controls.update_status(
+                    device_status,
+                    ac_indoor_temperature_proxy_offset_c=(
+                        ac_indoor_temperature_proxy_offset_c
+                    ),
+                    indoor_temperature_c=displayed_indoor_temp,
+                    indoor_temperature_source=displayed_indoor_source,
+                    poer_target_temperature_c=poer_target_temp,
+                )
 
             if hasattr(self, 'timer_controls'):
                 self.timer_controls.update_status(device_status)

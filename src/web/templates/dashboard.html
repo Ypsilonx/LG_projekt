@@ -70,7 +70,7 @@
                 <span x-text="todayKwh !== null ? todayKwh.toFixed(2) + ' kWh' : ''"></span>
             </div>
             <div class="text-right" x-show="currentTemp !== null">
-                <div class="text-xs text-gray-500 leading-tight">Vnitřní</div>
+                <div class="text-xs text-gray-500 leading-tight" x-text="currentTempHeadlineLabel"></div>
                 <div class="text-xl font-bold text-gray-200 tabular-nums" x-text="currentTemp + '°C'"></div>
             </div>
             <div class="text-gray-600 text-lg" x-show="currentTemp !== null && targetTemp !== null">→</div>
@@ -197,11 +197,6 @@
                     </div>
                 </div>
 
-                <div class="mt-3 pt-3 border-t border-gray-700/60 text-xs text-gray-500 flex justify-between">
-                    <span>Korekce čidla AC</span>
-                    <span class="font-semibold text-gray-400"
-                          x-text="(weatherConfig.sensor_offset_c >= 0 ? '+' : '') + (weatherConfig.sensor_offset_c ?? 0) + '°C'"></span>
-                </div>
             </div>
 
             <!-- PRAVÝ sloupec: přepínací předpověď (Dny / Hodiny) -->
@@ -256,8 +251,10 @@
                     <div x-ref="hourStrip" class="flex gap-2 overflow-x-auto py-1 scroll-smooth no-scrollbar"
                          style="scrollbar-width: none; -ms-overflow-style: none;">
                         <template x-for="(h, i) in hourly" :key="h.time_utc">
-                            <div :class="i===hourIndex ? 'ring-2 ring-blue-500 bg-gray-900' : 'bg-gray-900/60'"
-                                 class="flex-shrink-0 w-24 rounded-lg p-2 text-center transition">
+                            <div :class="i===hourIndex
+                                        ? 'bg-gray-900 border-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]'
+                                        : 'bg-gray-900/60 border-gray-700/60'"
+                                 class="flex-shrink-0 w-24 rounded-lg p-2 text-center transition border">
                                 <div class="text-[11px] text-yellow-600/80" x-text="h.date_label"></div>
                                 <div class="text-xs font-semibold text-gray-300" x-text="h.time_label"></div>
                                 <div class="text-2xl my-1" x-text="weatherEmoji(h)"></div>
@@ -403,13 +400,21 @@
                           x-text="modeEmoji(mode) + ' ' + modeLabel(mode)"></span>
                 </div>
                 <div class="flex justify-between" x-show="mode !== 'FAN'">
-                    <span class="text-gray-400">Nastaveno</span>
+                    <span class="text-gray-400">Cíl AC</span>
                     <span class="text-blue-400 font-bold"
                           x-text="targetTemp !== null ? targetTemp + '°C' : '—'"></span>
                 </div>
-                <div class="flex justify-between" x-show="currentTemp !== null">
-                    <span class="text-gray-400">Snímač</span>
-                    <span class="text-gray-200" x-text="currentTemp + '°C'"></span>
+                <div class="flex justify-between" x-show="poerCurrentTemp !== null">
+                    <span class="text-gray-400">Termostat POER</span>
+                    <span class="text-gray-200" x-text="poerCurrentTemp + '°C'"></span>
+                </div>
+                <div class="flex justify-between" x-show="acCurrentTemp !== null">
+                    <span class="text-gray-400">Klimatizace (čidlo)</span>
+                    <span class="text-gray-200" x-text="acCurrentTemp + '°C'"></span>
+                </div>
+                <div class="flex justify-between" x-show="poerTargetTemp !== null">
+                    <span class="text-gray-400">Cíl POER</span>
+                    <span class="text-emerald-400 font-bold" x-text="poerTargetTemp + '°C'"></span>
                 </div>
                 <div class="flex justify-between">
                     <span class="text-gray-400">Ventilátor</span>
@@ -554,12 +559,6 @@
                             <span class="text-gray-400">Horizont</span>
                             <span class="text-gray-200"
                                   x-text="(weatherConfig.horizon_hours || 24) + ' hod'"></span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Korekce čidla</span>
-                            <span class="text-gray-200"
-                                  x-text="(weatherConfig.sensor_offset_c >= 0 ? '+' : '') + (weatherConfig.sensor_offset_c ?? 0) + '°C'">
-                            </span>
                         </div>
                     </div>
                 </div>
@@ -1079,11 +1078,44 @@ document.addEventListener('alpine:init', () => {
         get isPowerOn()      { return this.deviceStatus?.operation?.airConOperationMode === 'POWER_ON'; },
         get mode()           { return this.deviceStatus?.airConJobMode?.currentJobMode || ''; },
         get targetTemp()     { if (this._tempOverride !== null) return this._tempOverride; const t = this.deviceStatus?.temperature?.targetTemperature; return t ?? null; },
-        get currentTemp() {
+        get acCurrentTemp() {
             const t = this.deviceStatus?.temperature?.currentTemperature;
             if (t === null || t === undefined) return null;
-            // Aplikuje kalibrační offset čidla (sensor_offset_c z automation_rules.json)
-            const offset = this.weatherConfig?.sensor_offset_c ?? 0;
+            return Math.round(t * 10) / 10;
+        },
+        get poerCurrentTemp() {
+            const t = this.weatherConfig?.poer_current_temperature_c;
+            if (t === null || t === undefined) return null;
+            return Math.round(t * 10) / 10;
+        },
+        get poerTargetTemp() {
+            const t = this.weatherConfig?.poer_target_temperature_c;
+            if (t === null || t === undefined) return null;
+            return Math.round(t * 10) / 10;
+        },
+        get currentTempSource() {
+            return this.weatherConfig?.indoor_temperature_source || 'ac_builtin_sensor_proxy';
+        },
+        get currentTempHeadlineLabel() {
+            return this.currentTempSource === 'poer_api' || this.currentTempSource === 'external_thermostat'
+                ? 'Vnitřní teplota'
+                : 'Vnitřní odhad';
+        },
+        get currentTempSourceLabel() {
+            if (this.currentTempSource === 'poer_api') return 'Termostat POER';
+            if (this.currentTempSource === 'external_thermostat') return 'Externí termostat';
+            return 'Odhad z AC';
+        },
+        get currentTemp() {
+            const thermostat = this.weatherConfig?.indoor_current_temperature_c;
+            if (thermostat !== null && thermostat !== undefined) {
+                return Math.round(thermostat * 10) / 10;
+            }
+            const t = this.deviceStatus?.temperature?.currentTemperature;
+            if (t === null || t === undefined) return null;
+            // Fallback: odhad interieru z AC cidla, pokud neni dostupna
+            // explicitni hodnota z externiho termostatu.
+            const offset = this.weatherConfig?.ac_indoor_temperature_proxy_offset_c ?? 0;
             return Math.round((t + offset) * 10) / 10;
         },
         get windStrength() {

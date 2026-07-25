@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog
@@ -20,6 +21,7 @@ from automation_rules import (
 from energy_analytics import export_energy_records_csv, normalize_energy_records, resolve_energy_query
 from gui.scheduler import ScheduleEntry
 from thermal_controller import decide_thermal_control, derive_policy_for_target
+from poer_api import fetch_poer_status
 from weather_provider import (
     decide_mode_by_weather,
     estimate_current_outdoor_temperature,
@@ -82,13 +84,21 @@ class AutomationEnergyMixin:
 
         outdoor_now_c = estimate_current_outdoor_temperature(snapshot, current_time)
 
+        indoor_temperature_c, indoor_source = self._extract_current_temperature()
+        sensor_proxy_offset_c = weather_cfg.ac_indoor_temperature_proxy_offset_c
+        if indoor_source == "external_thermostat":
+            sensor_proxy_offset_c = 0.0
+
         self.weather_panel.update_data(
             snapshot=snapshot,
             now_local=current_time,
             horizon_hours=weather_cfg.forecast_horizon_hours,
             outdoor_now_c=outdoor_now_c,
-            sensor_raw_c=self._extract_current_temperature(),
-            sensor_offset_c=weather_cfg.sensor_offset_c,
+            sensor_raw_c=indoor_temperature_c,
+            ac_indoor_temperature_proxy_offset_c=(
+                sensor_proxy_offset_c
+            ),
+            sensor_source=indoor_source,
             last_refresh_local=self.weather_last_refresh_at,
             last_error=self.weather_last_error,
         )
@@ -172,12 +182,15 @@ class AutomationEnergyMixin:
             and weather_cfg.use_short_term_forecast
             and weather_cfg.adjust_mode_by_forecast
         ):
-            current_temp_c = self._extract_current_temperature()
+            current_temp_c, current_temp_source = self._extract_current_temperature()
+            weather_offset_for_decision = weather_cfg.ac_indoor_temperature_proxy_offset_c
+            if current_temp_source == "external_thermostat":
+                weather_offset_for_decision = 0.0
             weather_adjustment = decide_mode_by_weather(
                 requested_mode=effective_entry.mode,
                 requested_temperature_c=effective_entry.temperature,
                 device_current_temperature_c=current_temp_c,
-                sensor_offset_c=weather_cfg.sensor_offset_c,
+                ac_indoor_temperature_proxy_offset_c=weather_offset_for_decision,
                 snapshot=self.weather_snapshot,
                 horizon_hours=weather_cfg.forecast_horizon_hours,
                 comfort_margin_c=weather_cfg.comfort_margin_c,
@@ -212,19 +225,37 @@ class AutomationEnergyMixin:
         return schedule_entry, resolution
 
     def _extract_current_temperature(self):
-        """Vrati aktualni namerenou teplotu ze stavu zarizeni."""
+        """Vrati aktualni indoor teplotu a zdroj hodnoty.
+
+        Priorita:
+            1. Externi termostat z weather.indoor_current_temperature_c.
+            2. Vestavene AC cidlo (raw), ktere se koriguje az pri pouziti.
+
+        Returns:
+            tuple[float | None, str]: (teplota, zdroj)
+                Zdroj je "external_thermostat", "ac_builtin_sensor" nebo "unknown".
+        """
+        weather_cfg = self.automation_rules.weather
+        if weather_cfg.indoor_current_temperature_source == "poer_api":
+            poer_value = getattr(self, "poer_indoor_temperature_c", None)
+            if poer_value is not None:
+                return float(poer_value), "external_thermostat"
+
+        if weather_cfg.indoor_current_temperature_c is not None:
+            return float(weather_cfg.indoor_current_temperature_c), "external_thermostat"
+
         if not isinstance(self.last_device_status, dict):
-            return None
+            return None, "unknown"
 
         temp_node = self.last_device_status.get("temperature", {})
         if not isinstance(temp_node, dict):
-            return None
+            return None, "unknown"
 
         value = temp_node.get("currentTemperature")
         try:
-            return float(value)
+            return float(value), "ac_builtin_sensor"
         except (TypeError, ValueError):
-            return None
+            return None, "unknown"
 
     def _extract_current_target_temperature(self):
         """Vrati aktualne nastavenou cilovou teplotu ze stavu zarizeni.
@@ -324,11 +355,16 @@ class AutomationEnergyMixin:
         if not weather_cfg.enabled:
             return
 
-        indoor_raw_c = self._extract_current_temperature()
+        indoor_raw_c, indoor_source = self._extract_current_temperature()
         if indoor_raw_c is None:
             return
 
-        indoor_corrected_c = indoor_raw_c + float(weather_cfg.sensor_offset_c)
+        if indoor_source == "external_thermostat":
+            indoor_corrected_c = float(indoor_raw_c)
+        else:
+            indoor_corrected_c = (
+                indoor_raw_c + float(weather_cfg.ac_indoor_temperature_proxy_offset_c)
+            )
         outdoor_online_c = estimate_current_outdoor_temperature(self.weather_snapshot, current_time)
 
         power_mode = str(
@@ -439,15 +475,14 @@ class AutomationEnergyMixin:
 
         async with aiohttp.ClientSession(timeout=timeout, headers=session_headers) as session:
             if weather_cfg.provider == "CHMI":
-                return await fetch_chmi_region_forecast(
+                weather_snapshot = await fetch_chmi_region_forecast(
                     session=session,
                     region_code=weather_cfg.chmi_region_code,
                     location_label=weather_cfg.chmi_location_label,
                 )
-
-            if weather_cfg.provider == "CHMI_METEOGRAM":
+            elif weather_cfg.provider == "CHMI_METEOGRAM":
                 try:
-                    return await fetch_chmi_meteogram_forecast(
+                    weather_snapshot = await fetch_chmi_meteogram_forecast(
                         session=session,
                         poi_id=weather_cfg.chmi_meteogram_poi_id,
                         location_label=weather_cfg.chmi_location_label,
@@ -459,13 +494,40 @@ class AutomationEnergyMixin:
                         "⚠️ Meteogram refresh selhal, prepinam na regionalni CHMI fallback: "
                         f"{exc}"
                     )
-                    return await fetch_chmi_region_forecast(
+                    weather_snapshot = await fetch_chmi_region_forecast(
                         session=session,
                         region_code=weather_cfg.chmi_region_code,
                         location_label=weather_cfg.chmi_location_label,
                     )
+            else:
+                raise RuntimeError(f"Nepodporovany weather provider: {weather_cfg.provider}")
 
-        raise RuntimeError(f"Nepodporovany weather provider: {weather_cfg.provider}")
+            poer_temperature_c = None
+            poer_target_temperature_c = None
+            poer_device_id = None
+            poer_error = None
+            if weather_cfg.indoor_current_temperature_source == "poer_api":
+                poer_api_key = os.getenv("LG_POER_API_KEY", "").strip()
+                if not poer_api_key:
+                    poer_error = "POER: chybi LG_POER_API_KEY"
+                else:
+                    poer_status = await fetch_poer_status(
+                        api_key=poer_api_key,
+                        preferred_device_id=weather_cfg.poer_device_id,
+                        session=session,
+                    )
+                    poer_temperature_c = poer_status.get("current_temperature_c")
+                    poer_target_temperature_c = poer_status.get("target_temperature_c")
+                    poer_device_id = poer_status.get("device_id")
+                    poer_error = poer_status.get("error_text")
+
+            return {
+                "weather_snapshot": weather_snapshot,
+                "poer_temperature_c": poer_temperature_c,
+                "poer_target_temperature_c": poer_target_temperature_c,
+                "poer_device_id": poer_device_id,
+                "poer_error": poer_error,
+            }
 
     def _on_weather_refresh_finished(self, future):
         """Dokonci weather refresh ve vlakne GUI po async stazeni."""
@@ -486,15 +548,33 @@ class AutomationEnergyMixin:
             self.weather_last_error = error_text
             logger.warning(f"⚠️ CHMI refresh selhal: {error_text}")
         else:
-            self.weather_snapshot = snapshot
+            weather_snapshot = snapshot
+            poer_temperature_c = None
+            poer_target_temperature_c = None
+            poer_device_id = None
+            poer_error = None
+
+            if isinstance(snapshot, dict) and "weather_snapshot" in snapshot:
+                weather_snapshot = snapshot.get("weather_snapshot")
+                poer_temperature_c = snapshot.get("poer_temperature_c")
+                poer_target_temperature_c = snapshot.get("poer_target_temperature_c")
+                poer_device_id = snapshot.get("poer_device_id")
+                poer_error = snapshot.get("poer_error")
+
+            self.weather_snapshot = weather_snapshot
+            self.poer_indoor_temperature_c = poer_temperature_c
+            self.poer_target_temperature_c = poer_target_temperature_c
+            self.poer_device_id = poer_device_id
             self.weather_last_refresh_at = datetime.now()
             self.weather_last_error = None
 
-            if snapshot is not None:
+            if weather_snapshot is not None:
                 logger.info(
                     "✅ CHMI refresh uspesny "
-                    f"({snapshot.region_code}, {len(snapshot.intervals)} intervalu)"
+                    f"({weather_snapshot.region_code}, {len(weather_snapshot.intervals)} intervalu)"
                 )
+            if poer_error:
+                logger.warning("⚠️ %s", poer_error)
 
         self._refresh_automation_summary(current_time=datetime.now())
 

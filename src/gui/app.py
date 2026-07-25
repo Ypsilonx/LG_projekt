@@ -334,13 +334,29 @@ class ClimateApp(DeviceRuntimeMixin, ModeSchedulerMixin, AutomationEnergyMixin, 
         target_temp = device_status.get("temperature", {}).get("targetTemperature")
 
         raw_temp_c = None
+        weather_cfg = self.automation_rules.weather
+        thermostat_temp_c = weather_cfg.indoor_current_temperature_c
+        poer_indoor_temp_c = getattr(self, "poer_indoor_temperature_c", None)
+        poer_target_temp_c = getattr(self, "poer_target_temperature_c", None)
         try:
             raw_temp_c = float(device_status.get("temperature", {}).get("currentTemperature"))
         except (TypeError, ValueError):
             raw_temp_c = None
-        corrected_temp_c = None
-        if raw_temp_c is not None:
-            corrected_temp_c = raw_temp_c + float(self.automation_rules.weather.sensor_offset_c)
+
+        estimated_indoor_temp_c = None
+        if weather_cfg.indoor_current_temperature_source == "poer_api" and poer_indoor_temp_c is not None:
+            estimated_indoor_temp_c = float(poer_indoor_temp_c)
+            sensor_prefix = "teplota z termostatu POER"
+        elif thermostat_temp_c is not None:
+            estimated_indoor_temp_c = float(thermostat_temp_c)
+            sensor_prefix = "teplota z termostatu"
+        else:
+            sensor_prefix = "odhad interieru z AC"
+            if raw_temp_c is not None:
+                estimated_indoor_temp_c = (
+                    raw_temp_c
+                    + float(weather_cfg.ac_indoor_temperature_proxy_offset_c)
+                )
 
         if power_mode == "POWER_ON" and run_state == "NORMAL":
             state_text = "Zapnuto"
@@ -350,13 +366,19 @@ class ClimateApp(DeviceRuntimeMixin, ModeSchedulerMixin, AutomationEnergyMixin, 
             state_text = f"{power_mode}/{run_state}"
 
         target_text = f"{target_temp}°C" if target_temp is not None else "?"
+        poer_target_text = f"{poer_target_temp_c:.1f}°C" if poer_target_temp_c is not None else "?"
+        ac_sensor_text = f"{raw_temp_c:.1f}°C" if raw_temp_c is not None else "?"
         if raw_temp_c is None:
-            sensor_text = "teplota s offsetem: nedostupna"
+            if estimated_indoor_temp_c is not None:
+                sensor_text = f"{sensor_prefix}: {estimated_indoor_temp_c:.1f}°C"
+            else:
+                sensor_text = f"{sensor_prefix}: nedostupna"
         else:
-            sensor_text = f"teplota s offsetem: {corrected_temp_c:.1f}°C"
+            sensor_text = f"{sensor_prefix}: {estimated_indoor_temp_c:.1f}°C"
 
         self.live_state_var.set(
-            f"Klimatizace: {state_text} | Režim: {mode} | Cíl: {target_text} | {sensor_text}"
+            f"Klimatizace: {state_text} | Režim: {mode} | AC čidlo: {ac_sensor_text} | "
+            f"Cíl AC: {target_text} | {sensor_text} | Cíl POER: {poer_target_text}"
         )
 
     def create_automation_panel(self):

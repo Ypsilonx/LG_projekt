@@ -246,12 +246,23 @@ class ClimateControls(ttk.Frame):
         self.temp_var.set(temp)
         self.temp_label.config(text=f"Cíl: {temp}°C")
         
-    def update_status(self, device_status: dict, sensor_offset_c: float = 0.0):
+    def update_status(
+        self,
+        device_status: dict,
+        ac_indoor_temperature_proxy_offset_c: float = 0.0,
+        indoor_temperature_c: float | None = None,
+        indoor_temperature_source: str = "ac_builtin_sensor",
+        poer_target_temperature_c: float | None = None,
+    ):
         """Aktualizace GUI podle stavu zařízení.
 
         Args:
             device_status: Snapshot stavu klimatizace.
-            sensor_offset_c: Korekce cidla v C, aplikovana na aktualni teplotu.
+            ac_indoor_temperature_proxy_offset_c: Docasny offset pro odhad
+                interierove teploty z interniho cidla klimatizace.
+            indoor_temperature_c: Volitelna indoor teplota z externiho termostatu.
+            indoor_temperature_source: Zdroj indoor teploty.
+            poer_target_temperature_c: Volitelna cilova teplota termostatu POER.
         """
         # Extrakce dat ze statusu
         current_temp = device_status.get("temperature", {}).get("currentTemperature", "?")
@@ -263,12 +274,29 @@ class ClimateControls(ttk.Frame):
         wind_leftright = device_status.get("windDirection", {}).get("rotateLeftRight", False)
         power_save = device_status.get("powerSave", {}).get("powerSaveEnabled", False)
         
-        # Aktualizace aktuální teploty (zobrazeni s offsetem)
+        ac_sensor_text = "--°C"
         try:
-            corrected_current_temp = float(current_temp) + float(sensor_offset_c)
-            self.current_temp_label.config(text=f"Aktualni (s offsetem): {corrected_current_temp:.1f}°C")
+            ac_sensor_text = f"{float(current_temp):.1f}°C"
         except (TypeError, ValueError):
-            self.current_temp_label.config(text="Aktualni (s offsetem): --°C")
+            pass
+
+        if indoor_temperature_c is not None and indoor_temperature_source == "external_thermostat":
+            self.current_temp_label.config(
+                text=(
+                    f"Termostat: {float(indoor_temperature_c):.1f}°C | "
+                    f"Klimatizace: {ac_sensor_text}"
+                )
+            )
+        else:
+            try:
+                corrected_current_temp = (
+                    float(current_temp) + float(ac_indoor_temperature_proxy_offset_c)
+                )
+                self.current_temp_label.config(
+                    text=f"Odhad interieru z AC: {corrected_current_temp:.1f}°C"
+                )
+            except (TypeError, ValueError):
+                self.current_temp_label.config(text="Odhad interieru z AC: --°C")
         
         # Aktualizace hodnot v GUI (bez triggeru událostí)
         if mode in self.modes:
@@ -278,7 +306,12 @@ class ClimateControls(ttk.Frame):
             
         if isinstance(target_temp, (int, float)) and mode != "FAN":
             self.temp_var.set(target_temp)
-            self.temp_label.config(text=f"Cíl: {target_temp}°C")
+            poer_target_text = (
+                f"{float(poer_target_temperature_c):.1f}°C"
+                if poer_target_temperature_c is not None
+                else "--°C"
+            )
+            self.temp_label.config(text=f"Cíl AC: {target_temp}°C | Cíl POER: {poer_target_text}")
             
         if wind in self.wind_strengths:
             self.wind_var.set(wind)
