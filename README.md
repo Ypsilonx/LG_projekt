@@ -54,7 +54,7 @@ data/                      # Docker volume (necommitovat config.json, devices.js
 ├── devices.json           # Seznam zařízení ⚠️
 ├── device_profile.json    # Profil zařízení
 ├── schedule.json          # Časové plány HAND scheduleru
-├── automation_rules.json  # Sezónní pravidla + weather (POI, offset, interval, horizont)
+├── automation_rules.json  # Sezónní pravidla + weather (POI, indoor proxy, outdoor zdroj, interval, horizont)
 └── weather_cache.json     # Poslední stažená předpověď ČHMÚ (autogenerovaná, necommitovat)
 
 Dockerfile                 # python:3.12-slim, non-root uid 1000
@@ -107,6 +107,10 @@ python setup.py
 
 ### Konfigurace
 
+Projekt preferuje klíče v `.env` (lokálně i v Dockeru). Při spuštění přes
+`uv run python ...` nebo `python ...` se `.env` načte automaticky.
+Proměnné z prostředí shellu mají vždy vyšší prioritu.
+
 **`data/config.json`:**
 ```json
 {
@@ -129,7 +133,22 @@ python setup.py
 }]
 ```
 
-Volitelně `data/automation_rules.json` – sezóny, weather provider (POI, region), sensor offset, a také externí zdroj aktuální teploty. Stačí doplnit `weather.current_temperature_url` na endpoint vracející např. `{"temperature_c": 12.3}`; pokud je URL dostupná, aplikace použije tuto hodnotu před fallbackem na předpověď.
+Volitelně `data/automation_rules.json` – sezóny, weather provider (POI, region), korekce interního AC čidla `weather.ac_indoor_temperature_proxy_offset_c`, volitelná indoor teplota z externího termostatu `weather.indoor_current_temperature_c` a také externí zdroj aktuální venkovní teploty. Pro venkovní reálné čidlo použijte `weather.outdoor_current_temperature_url` s endpointem vracejícím např. `{"temperature_c": 12.3}`; pokud je URL dostupná, aplikace použije tuto hodnotu před fallbackem na předpověď.
+
+> Pokud je vyplněno `weather.indoor_current_temperature_c`, regulace i dashboard používají tuto hodnotu jako prioritní indoor teplotu (místo odhadu z AC čidla).
+
+> Korekce `ac_indoor_temperature_proxy_offset_c` se používá i pro skryté mapování cíle: při zadání pokojové teploty se do AC odešle korigovaný target (`ac_target = room_target - proxy_offset`). Příklad: offset `-2.0`, požadavek `24°C` -> do AC se odešle `26°C`.
+
+### POER termostat bez Home Assistanta
+
+Pro přímé čtení indoor teploty z POER cloudu:
+
+1. Do `.env` nastavte `LG_POER_API_KEY` (hodnota z POER aplikace, včetně prefixu `cn` nebo `eu`).
+2. V `data/automation_rules.json` nastavte:
+    - `weather.indoor_current_temperature_source` na `"poer_api"`
+    - volitelně `weather.poer_device_id` na konkrétní zařízení (jinak se použije první dostupné)
+
+API key se používá pouze v runtime přes proměnné prostředí, neukládá se do JSON konfigurace.
 
 > ⚠️ Nikdy necommitujte `config.json` ani `devices.json`!
 

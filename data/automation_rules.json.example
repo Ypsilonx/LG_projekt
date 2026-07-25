@@ -10,7 +10,10 @@
   "strategy": "comfort_with_energy_saving",
   "weather": {
     "enabled": true,
-    "sensor_offset_c": -2.0,
+    "ac_indoor_temperature_proxy_offset_c": -2.0,
+    "indoor_current_temperature_c": null,
+    "indoor_current_temperature_source": "external_thermostat",
+    "poer_device_id": null,
     "use_short_term_forecast": true,
     "provider": "CHMI_METEOGRAM",
     "chmi_region_code": "RPZL",
@@ -23,8 +26,8 @@
     "comfort_margin_c": 1.0,
     "prefer_aladin_model": true,
     "adjust_mode_by_forecast": true,
-    "current_temperature_c": null,
-    "current_temperature_source": "external",
-    "current_temperature_url": null
+    "outdoor_current_temperature_c": null,
+    "outdoor_current_temperature_source": "external",
+    "outdoor_current_temperature_url": null
   }
 }

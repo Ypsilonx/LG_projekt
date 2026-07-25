@@ -35,7 +35,10 @@ DEFAULT_AUTOMATION_RULES: dict[str, Any] = {
     "strategy": "comfort_with_energy_saving",
     "weather": {
         "enabled": True,
-        "sensor_offset_c": -2.0,
+        "ac_indoor_temperature_proxy_offset_c": -2.0,
+        "indoor_current_temperature_c": None,
+        "indoor_current_temperature_source": "external_thermostat",
+        "poer_device_id": None,
         "use_short_term_forecast": True,
         "provider": "CHMI_METEOGRAM",
         "chmi_region_code": "RPZL",
@@ -48,9 +51,9 @@ DEFAULT_AUTOMATION_RULES: dict[str, Any] = {
         "comfort_margin_c": 1.0,
         "prefer_aladin_model": True,
         "adjust_mode_by_forecast": True,
-        "current_temperature_c": None,
-        "current_temperature_source": "external",
-        "current_temperature_url": None,
+        "outdoor_current_temperature_c": None,
+        "outdoor_current_temperature_source": "external",
+        "outdoor_current_temperature_url": None,
     },
 }
 
@@ -65,7 +68,14 @@ class WeatherPlanningConfig:
 
     Args:
         enabled: Enables weather-based logic (future phases).
-        sensor_offset_c: Sensor correction offset in degrees Celsius.
+        ac_indoor_temperature_proxy_offset_c: Temporary offset applied only
+            to the built-in AC indoor reading until a real indoor thermostat
+            or sensor is integrated.
+        indoor_current_temperature_c: Optional current indoor temperature
+            from an external thermostat. When present, automation logic
+            prefers this value over AC proxy estimate.
+        indoor_current_temperature_source: Human-readable indoor source label.
+        poer_device_id: Optional POER device identifier for cloud query.
         use_short_term_forecast: Enables short-term forecast usage.
         provider: Weather provider identifier.
         chmi_region_code: CHMI regional forecast code.
@@ -81,7 +91,10 @@ class WeatherPlanningConfig:
     """
 
     enabled: bool
-    sensor_offset_c: float
+    ac_indoor_temperature_proxy_offset_c: float
+    indoor_current_temperature_c: float | None
+    indoor_current_temperature_source: str
+    poer_device_id: str | None
     use_short_term_forecast: bool
     provider: str
     chmi_region_code: str
@@ -94,6 +107,27 @@ class WeatherPlanningConfig:
     comfort_margin_c: float
     prefer_aladin_model: bool
     adjust_mode_by_forecast: bool
+
+    @property
+    def sensor_offset_c(self) -> float:
+        """Return deprecated alias for the temporary AC indoor proxy offset.
+
+        Returns:
+            float: Temporary offset applied to the AC indoor reading.
+        """
+
+        return self.ac_indoor_temperature_proxy_offset_c
+
+    @property
+    def setpoint_correction_c(self) -> float:
+        """Return correction from room target to AC target.
+
+        Returns:
+            float: Value added to room target before sending to AC.
+        """
+
+        # room = ac + proxy_offset => ac = room - proxy_offset
+        return -self.ac_indoor_temperature_proxy_offset_c
 
 
 @dataclass(frozen=True)
@@ -277,9 +311,36 @@ def _parse_weather_settings(raw: Any) -> WeatherPlanningConfig:
         raise AutomationRulesError("weather must be an object.")
 
     try:
-        sensor_offset_c = float(raw.get("sensor_offset_c", 0.0))
+        sensor_offset_c = float(
+            raw.get(
+                "ac_indoor_temperature_proxy_offset_c",
+                raw.get("sensor_offset_c", 0.0),
+            )
+        )
     except (TypeError, ValueError) as exc:
-        raise AutomationRulesError("weather.sensor_offset_c must be a number.") from exc
+        raise AutomationRulesError(
+            "weather.ac_indoor_temperature_proxy_offset_c must be a number. "
+            "Deprecated alias weather.sensor_offset_c is still accepted."
+        ) from exc
+
+    indoor_current_temperature_c: float | None = None
+    raw_indoor_current_temperature_c = raw.get("indoor_current_temperature_c")
+    if raw_indoor_current_temperature_c not in (None, ""):
+        try:
+            indoor_current_temperature_c = float(raw_indoor_current_temperature_c)
+        except (TypeError, ValueError) as exc:
+            raise AutomationRulesError(
+                "weather.indoor_current_temperature_c must be a number or null."
+            ) from exc
+
+    indoor_current_temperature_source = str(
+        raw.get("indoor_current_temperature_source", "external_thermostat")
+    ).strip() or "external_thermostat"
+
+    poer_device_id = None
+    raw_poer_device_id = raw.get("poer_device_id")
+    if raw_poer_device_id not in (None, ""):
+        poer_device_id = str(raw_poer_device_id).strip() or None
 
     provider = str(raw.get("provider", "CHMI_METEOGRAM")).upper().strip() or "CHMI_METEOGRAM"
     allowed_providers = {"CHMI", "CHMI_METEOGRAM"}
@@ -349,7 +410,10 @@ def _parse_weather_settings(raw: Any) -> WeatherPlanningConfig:
 
     return WeatherPlanningConfig(
         enabled=bool(raw.get("enabled", True)),
-        sensor_offset_c=sensor_offset_c,
+        ac_indoor_temperature_proxy_offset_c=sensor_offset_c,
+        indoor_current_temperature_c=indoor_current_temperature_c,
+        indoor_current_temperature_source=indoor_current_temperature_source,
+        poer_device_id=poer_device_id,
         use_short_term_forecast=bool(raw.get("use_short_term_forecast", True)),
         provider=provider,
         chmi_region_code=chmi_region_code,
@@ -624,7 +688,7 @@ def build_automation_summary(
             f"Pocasi: {weather_source} "
             f"{rules.weather.forecast_horizon_hours}h "
             f"(refresh {rules.weather.refresh_interval_hours}h, "
-            f"offset {rules.weather.sensor_offset_c:+.1f}C)"
+            f"docasny indoor proxy z AC {rules.weather.ac_indoor_temperature_proxy_offset_c:+.1f}C)"
         )
     else:
         weather_text = "Pocasi: vypnuto"

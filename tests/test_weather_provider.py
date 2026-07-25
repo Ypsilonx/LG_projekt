@@ -3,6 +3,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -10,7 +11,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from weather_provider import WeatherForecastInterval, WeatherForecastSnapshot, estimate_current_outdoor_temperature
-from web.routes.weather import _resolve_current_temperature
+from web.routes.weather import _fetch_weather_data, _resolve_current_temperature
 
 
 class WeatherProviderTests(unittest.TestCase):
@@ -83,6 +84,66 @@ class WeatherProviderTests(unittest.TestCase):
         value, source = asyncio.run(run_test())
         self.assertEqual(value, 11.3)
         self.assertEqual(source, "external")
+
+    def test_fetch_weather_data_keeps_outdoor_forecast_raw(self) -> None:
+        future_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def raise_for_status(self) -> None:
+                return None
+
+            async def json(self, content_type=None):
+                return self._payload
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+        class FakeSession:
+            def __init__(self, payload, *args, **kwargs):
+                self._payload = payload
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            def get(self, url, **kwargs):
+                return FakeResponse(self._payload)
+
+        async def run_test() -> dict:
+            payload = {
+                "data": [
+                    {
+                        "validityTime": future_time,
+                        "t2m": 17.4,
+                    }
+                ]
+            }
+            with patch(
+                "web.routes.weather.aiohttp.ClientSession",
+                return_value=FakeSession(payload),
+            ):
+                return await _fetch_weather_data(
+                    {
+                        "enabled": True,
+                        "chmi_meteogram_poi_id": "510",
+                        "forecast_horizon_hours": 24,
+                        "ac_indoor_temperature_proxy_offset_c": -2.0,
+                    }
+                )
+
+        result = asyncio.run(run_test())
+
+        self.assertEqual(result["hourly"][0]["temp_c"], 17.4)
+        self.assertEqual(result["hourly"][0]["temp_raw_c"], 17.4)
+        self.assertEqual(result["ac_indoor_temperature_proxy_offset_c"], -2.0)
 
 
 if __name__ == "__main__":

@@ -20,12 +20,13 @@ from pathlib import Path
 
 import aiohttp
 from fastapi import APIRouter, Request
+from poer_api import fetch_poer_status
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/weather", tags=["Počasí"])
 
-_DATA_DIR = Path("data")
+_DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 _METEOGRAM_BASE = "https://data-provider.chmi.cz/api/graphs/graf.meteogram"
 
 # Soubor pro perzistenci poslední úspěšně stažené předpovědi. Umožňuje
@@ -50,6 +51,79 @@ def _load_weather_config() -> dict:
         return rules.get("weather", {})
     except Exception:
         return {}
+
+
+def _read_ac_indoor_temperature_proxy_offset(config: dict) -> float:
+    """Return temporary AC indoor proxy offset from weather config.
+
+    The value is a transitional workaround for the built-in AC indoor sensor.
+    It must never be applied to outdoor forecast data.
+
+    Args:
+        config: Weather configuration object.
+
+    Returns:
+        float: Temporary indoor proxy offset in Celsius.
+    """
+
+    raw_value = config.get(
+        "ac_indoor_temperature_proxy_offset_c",
+        config.get("sensor_offset_c", 0.0),
+    )
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning("Neplatna hodnota AC indoor proxy offsetu: %s", raw_value)
+        return 0.0
+
+
+def _normalize_weather_config_for_clients(config: dict) -> dict:
+    """Normalize weather config for UI clients and future sensor integration.
+
+    Args:
+        config: Raw weather section from automation rules.
+
+    Returns:
+        dict: Client-safe configuration with explicit field names.
+    """
+
+    normalized = dict(config)
+    normalized["ac_indoor_temperature_proxy_offset_c"] = (
+        _read_ac_indoor_temperature_proxy_offset(config)
+    )
+
+    configured_indoor_source = str(
+        config.get("indoor_current_temperature_source", "ac_builtin_sensor_proxy")
+    ).strip() or "ac_builtin_sensor_proxy"
+
+    indoor_override_c = _read_optional_float(config.get("indoor_current_temperature_c"))
+    if indoor_override_c is None:
+        normalized["indoor_current_temperature_c"] = None
+        if configured_indoor_source == "poer_api":
+            normalized["indoor_temperature_is_estimated"] = False
+            normalized["indoor_temperature_source"] = "poer_api"
+        else:
+            normalized["indoor_temperature_is_estimated"] = True
+            normalized["indoor_temperature_source"] = "ac_builtin_sensor_proxy"
+    else:
+        normalized["indoor_current_temperature_c"] = indoor_override_c
+        normalized["indoor_temperature_is_estimated"] = False
+        normalized["indoor_temperature_source"] = configured_indoor_source
+
+    # room_target + correction = AC target
+    normalized["setpoint_correction_c"] = -normalized["ac_indoor_temperature_proxy_offset_c"]
+
+    if "outdoor_current_temperature_c" not in normalized:
+        normalized["outdoor_current_temperature_c"] = config.get("current_temperature_c")
+    if "outdoor_current_temperature_source" not in normalized:
+        normalized["outdoor_current_temperature_source"] = config.get(
+            "current_temperature_source",
+            "forecast",
+        )
+    if "outdoor_current_temperature_url" not in normalized:
+        normalized["outdoor_current_temperature_url"] = config.get("current_temperature_url")
+
+    return normalized
 
 
 def _read_optional_float(value: object) -> float | None:
@@ -119,33 +193,49 @@ async def _fetch_external_current_temperature(
     config: dict,
     session: aiohttp.ClientSession | None = None,
 ) -> tuple[float | None, str]:
-    """Fetch current temperature from an external HTTP endpoint if configured.
+    """Fetch current outdoor temperature from an external HTTP endpoint.
 
     The endpoint can return a simple JSON object, for example
     ``{"temperature_c": 12.3}`` or ``{"current": {"temp_c": 12.3}}``.
     If the fetch fails or the payload is invalid, the function returns
     ``(None, "forecast")`` so the existing forecast fallback remains active.
     """
-    override_value = config.get("current_temperature_c")
+    override_value = config.get("outdoor_current_temperature_c", config.get("current_temperature_c"))
     if override_value is None:
-        override_value = os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_C")
+        override_value = (
+            os.getenv("LG_WEATHER_OUTDOOR_CURRENT_TEMPERATURE_C")
+            or os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_C")
+        )
 
     if override_value is not None:
         try:
             return float(override_value), str(
-                config.get("current_temperature_source")
+                config.get(
+                    "outdoor_current_temperature_source",
+                    config.get("current_temperature_source"),
+                )
+                or os.getenv("LG_WEATHER_OUTDOOR_CURRENT_TEMPERATURE_SOURCE")
                 or os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_SOURCE")
                 or "external"
             )
         except (TypeError, ValueError):
-            logger.warning("Neplatná hodnota current_temperature_c: %s", override_value)
+            logger.warning("Neplatna hodnota outdoor_current_temperature_c: %s", override_value)
 
-    url = config.get("current_temperature_url") or os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_URL")
+    url = (
+        config.get("outdoor_current_temperature_url")
+        or config.get("current_temperature_url")
+        or os.getenv("LG_WEATHER_OUTDOOR_CURRENT_TEMPERATURE_URL")
+        or os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_URL")
+    )
     if not url:
         return None, "forecast"
 
     source_label = str(
-        config.get("current_temperature_source")
+        config.get(
+            "outdoor_current_temperature_source",
+            config.get("current_temperature_source"),
+        )
+        or os.getenv("LG_WEATHER_OUTDOOR_CURRENT_TEMPERATURE_SOURCE")
         or os.getenv("LG_WEATHER_CURRENT_TEMPERATURE_SOURCE")
         or "external"
     ).strip() or "external"
@@ -276,7 +366,40 @@ async def get_weather_config() -> dict:
     Returns:
         dict: Konfigurace (provider, poi_id, location, horizon, offset …).
     """
-    return _load_weather_config()
+    normalized = _normalize_weather_config_for_clients(_load_weather_config())
+
+    if normalized.get("indoor_temperature_source") != "poer_api":
+        return normalized
+
+    poer_api_key = os.getenv("LG_POER_API_KEY", "").strip()
+    if not poer_api_key:
+        normalized["indoor_temperature_error"] = "POER: chybi LG_POER_API_KEY"
+        return normalized
+
+    poer_status = await fetch_poer_status(
+        api_key=poer_api_key,
+        preferred_device_id=normalized.get("poer_device_id"),
+    )
+    poer_temp_c = poer_status.get("current_temperature_c")
+    poer_target_temp_c = poer_status.get("target_temperature_c")
+    poer_device_id = poer_status.get("device_id")
+    poer_error = poer_status.get("error_text")
+    if poer_device_id:
+        normalized["poer_device_id"] = poer_device_id
+    if poer_temp_c is not None:
+        normalized["indoor_current_temperature_c"] = round(float(poer_temp_c), 1)
+        normalized["poer_current_temperature_c"] = round(float(poer_temp_c), 1)
+        normalized["indoor_temperature_is_estimated"] = False
+    else:
+        normalized["poer_current_temperature_c"] = None
+    if poer_target_temp_c is not None:
+        normalized["poer_target_temperature_c"] = round(float(poer_target_temp_c), 1)
+    else:
+        normalized["poer_target_temperature_c"] = None
+    if poer_error:
+        normalized["indoor_temperature_error"] = poer_error
+
+    return normalized
 
 
 async def _fetch_weather_data(config: dict) -> dict:
@@ -295,7 +418,7 @@ async def _fetch_weather_data(config: dict) -> dict:
     """
     poi_id = str(config.get("chmi_meteogram_poi_id", "510"))
     location = config.get("chmi_location_label", "")
-    sensor_offset = float(config.get("sensor_offset_c", 0.0))
+    ac_indoor_proxy_offset = _read_ac_indoor_temperature_proxy_offset(config)
     horizon_h = int(config.get("forecast_horizon_hours", 24))
     url = f"{_METEOGRAM_BASE}/{poi_id}"
     now_utc = datetime.now(timezone.utc)
@@ -336,7 +459,7 @@ async def _fetch_weather_data(config: dict) -> dict:
                 "time_utc": dt_utc.isoformat(),
                 "time_label": local_dt.strftime("%H:%M"),
                 "date_label": date_key,
-                "temp_c": round(float(t2m) + sensor_offset, 1),
+                "temp_c": round(float(t2m), 1),
                 "temp_raw_c": round(float(t2m), 1),
             }
 
@@ -426,12 +549,16 @@ async def _fetch_weather_data(config: dict) -> dict:
             "enabled": True,
             "location": location,
             "poi_id": poi_id,
-            "sensor_offset_c": sensor_offset,
+            "ac_indoor_temperature_proxy_offset_c": ac_indoor_proxy_offset,
+            "indoor_temperature_is_estimated": True,
+            "indoor_temperature_source": "ac_builtin_sensor_proxy",
             "horizon_hours": horizon_h,
             "fetched_at": now_utc.isoformat(),
             "current": current_point,
             "current_temperature_c": current_temperature_c,
             "current_temperature_source": current_temperature_source,
+            "outdoor_current_temperature_c": current_temperature_c,
+            "outdoor_current_temperature_source": current_temperature_source,
             "forecast_3h": hourly[: min(3, len(hourly))],
             "hourly": hourly,
             "daily": daily,
@@ -482,7 +609,7 @@ async def get_weather_forecast(request: Request) -> dict:
 
     Returns:
         dict: ``{enabled, location, fetched_at, horizon_hours,
-                 sensor_offset_c, hourly: [...]}``.
+                 hourly: [...]}``.
               Při chybě downloadu vrátí ``{..., error: str, hourly: []}``.
     """
     config = _load_weather_config()

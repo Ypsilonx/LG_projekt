@@ -59,8 +59,8 @@ class WeatherForecastSnapshot:
         location_label: User-facing location label.
         intervals: Parsed forecast intervals.
         source_files: Source JSON filenames used for this snapshot.
-        current_temperature_c: Optional explicit current temperature.
-        current_temperature_source: Optional source label for current temperature.
+        current_temperature_c: Optional explicit current outdoor temperature.
+        current_temperature_source: Optional source label for current outdoor temperature.
     """
 
     fetched_at_utc: datetime
@@ -717,7 +717,7 @@ def decide_mode_by_weather(
     requested_mode: str,
     requested_temperature_c: float | int | None,
     device_current_temperature_c: float | int | None,
-    sensor_offset_c: float,
+    ac_indoor_temperature_proxy_offset_c: float,
     snapshot: WeatherForecastSnapshot | None,
     horizon_hours: int,
     comfort_margin_c: float,
@@ -733,8 +733,9 @@ def decide_mode_by_weather(
     Args:
         requested_mode: Original scheduled mode.
         requested_temperature_c: Scheduled target temperature.
-        device_current_temperature_c: Current measured device temperature.
-        sensor_offset_c: Sensor correction offset.
+        device_current_temperature_c: Current temperature reported by the AC.
+        ac_indoor_temperature_proxy_offset_c: Temporary proxy offset applied
+            only until a real indoor thermostat or sensor is wired in.
         snapshot: Weather forecast snapshot.
         horizon_hours: Forecast horizon for decision.
         comfort_margin_c: Comfort hysteresis around target temperature.
@@ -788,7 +789,7 @@ def decide_mode_by_weather(
 
     current_temp_c = _safe_float(device_current_temperature_c)
     adjusted_sensor_c = (
-        current_temp_c + float(sensor_offset_c)
+        current_temp_c + float(ac_indoor_temperature_proxy_offset_c)
         if current_temp_c is not None
         else None
     )

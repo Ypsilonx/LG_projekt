@@ -8,6 +8,8 @@ kolize při rychlém sekvenčním ovládání.
 """
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any
 
 from profile_limits import get_temp_limits
@@ -64,6 +66,44 @@ REQUIRES_POWER_ON = {
     "set_power_save",
     "set_sleep_timer",
 }
+
+_AUTOMATION_RULES_PATH = Path(__file__).resolve().parents[1] / "data" / "automation_rules.json"
+
+
+def _load_setpoint_correction_c() -> float:
+    """Load room-to-AC setpoint correction from automation rules.
+
+    The correction is derived from existing AC indoor proxy offset:
+    room = ac + proxy_offset  =>  ac_target = room_target - proxy_offset.
+
+    Returns:
+        float: Correction added to user room target before sending to AC.
+    """
+
+    try:
+        payload = json.loads(_AUTOMATION_RULES_PATH.read_text(encoding="utf-8"))
+        weather = payload.get("weather", {}) if isinstance(payload, dict) else {}
+        proxy_offset = weather.get(
+            "ac_indoor_temperature_proxy_offset_c",
+            weather.get("sensor_offset_c", 0.0),
+        )
+        return -float(proxy_offset)
+    except Exception:
+        return 0.0
+
+
+def _apply_setpoint_correction(temp_c: float) -> float:
+    """Convert room target temperature to AC target temperature.
+
+    Args:
+        temp_c: Requested room target in Celsius.
+
+    Returns:
+        float: Corrected AC target in Celsius.
+    """
+
+    correction_c = _load_setpoint_correction_c()
+    return round(float(temp_c) + correction_c, 1)
 
 
 def _get_power_mode(device_status: dict[str, Any]) -> str:
@@ -177,21 +217,25 @@ def build_command_plan(
                 steps=[],
                 skip_reason="Teplotu nelze měnit v režimu FAN. Nejprve změňte režim.",
             )
+        effective_args = args
         if args:
             try:
-                temp_val = float(args[0])
+                requested_temp_val = float(args[0])
+                temp_val = _apply_setpoint_correction(requested_temp_val)
                 limits = get_temp_limits(job_mode)
                 if limits and not (limits["min"] <= temp_val <= limits["max"]):
                     return CommandPlan(
                         steps=[],
                         skip_reason=(
-                            f"Teplota {temp_val}°C je mimo povolený rozsah "
+                            f"Po korekci cíle ({requested_temp_val}°C -> {temp_val}°C) je "
+                            "výsledek mimo povolený rozsah "
                             f"{limits['min']}–{limits['max']}°C pro režim {job_mode or 'neznámý'}."
                         ),
                     )
+                effective_args = (temp_val, *args[1:])
             except (TypeError, ValueError):
                 pass
-        steps.append(CommandStep("set_temperature", args, delay_after_seconds=1.5))
+        steps.append(CommandStep("set_temperature", effective_args, delay_after_seconds=1.5))
         return CommandPlan(steps=steps)
 
     if command == "set_wind_strength":
