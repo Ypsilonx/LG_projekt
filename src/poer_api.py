@@ -8,12 +8,22 @@ Autentizace pouziva API key z mobilni POER aplikace.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
 import aiohttp
 
 _POER_CN_URL = "https://open2.poersmart.com"
 _POER_EU_URL = "https://open.poersmart.com"
+
+# Krátkodobá cache pro čtecí dotazy (GET /api/poer/status, GET /api/weather/config).
+# POER cloud API nemá zdokumentovaný rate limit, ale opakované SYNC+QUERY
+# volání při každém načtení stránky/tabu zbytečně zatěžují cizí server –
+# proto se stav krátce cachuje a sdílí mezi oběma endpointy.
+_STATUS_CACHE_TTL_S = 20.0
+_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_status_cache_lock = asyncio.Lock()
 
 
 def _resolve_poer_endpoint_and_token(api_key: str) -> tuple[str, str] | None:
@@ -245,6 +255,56 @@ async def fetch_poer_status(
             await client.close()
 
 
+async def fetch_poer_status_cached(
+    api_key: str,
+    preferred_device_id: str | None = None,
+    session: aiohttp.ClientSession | None = None,
+    ttl_seconds: float = _STATUS_CACHE_TTL_S,
+) -> dict[str, Any]:
+    """Načte stav POER termostatu s krátkodobou cache a jedním retry pokusem.
+
+    Určeno pro čtecí endpointy volané z prohlížeče (dashboard, automatizace),
+    kde více téměř současných požadavků (např. ``loadPoerStatus`` +
+    ``loadWeatherConfig`` po odeslání příkazu, nebo více otevřených tabů)
+    by jinak zbytečně znásobilo volání cizího cloud API. Chyby v podobě
+    dočasného výpadku (síť, 5xx) se navíc jednou zopakují s krátkou
+    prodlevou, než se vrátí chybový stav volajícímu.
+
+    Args:
+        api_key:              POER API klíč (prefix cn/eu + token).
+        preferred_device_id:  Volitelné konkrétní zařízení.
+        session:               Volitelná sdílená aiohttp session.
+        ttl_seconds:           Platnost cache v sekundách.
+
+    Returns:
+        dict[str, Any]: Stejná struktura jako ``fetch_poer_status``.
+    """
+    cache_key = f"{api_key}:{preferred_device_id or ''}"
+
+    async with _status_cache_lock:
+        cached = _status_cache.get(cache_key)
+        if cached is not None and (time.monotonic() - cached[0]) < ttl_seconds:
+            return cached[1]
+
+    result = await fetch_poer_status(
+        api_key=api_key, preferred_device_id=preferred_device_id, session=session
+    )
+
+    if result.get("error_text") is not None:
+        # Jeden retry pro přechodné výpadky (síť, 5xx) – nechceme uživateli
+        # hlásit chybu kvůli jednomu zahozenému paketu.
+        await asyncio.sleep(1.0)
+        result = await fetch_poer_status(
+            api_key=api_key, preferred_device_id=preferred_device_id, session=session
+        )
+
+    if result.get("error_text") is None:
+        async with _status_cache_lock:
+            _status_cache[cache_key] = (time.monotonic(), result)
+
+    return result
+
+
 async def send_poer_command(
     api_key: str,
     endpoint: str,
@@ -327,6 +387,12 @@ async def send_poer_command(
     try:
         async with client.post(url, json=payload, headers=headers) as response:
             if response.status == 200:
+                # Zneplatnit cache stavu – frontend po příkazu okamžitě volá
+                # loadPoerStatus(), a cachovaná (předchozí) hodnota by ukázala
+                # starý stav až 20 s po úspěšném zápisu.
+                cache_key = f"{api_key}:{preferred_device_id or ''}"
+                async with _status_cache_lock:
+                    _status_cache.pop(cache_key, None)
                 return {"success": True, "device_id": device_id, "error_text": None}
 
             text = await response.text()

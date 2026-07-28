@@ -20,7 +20,7 @@ from pathlib import Path
 
 import aiohttp
 from fastapi import APIRouter, Request
-from poer_api import fetch_poer_status
+from poer_api import fetch_poer_status_cached
 
 logger = logging.getLogger(__name__)
 
@@ -376,7 +376,7 @@ async def get_weather_config() -> dict:
         normalized["indoor_temperature_error"] = "POER: chybi LG_POER_API_KEY"
         return normalized
 
-    poer_status = await fetch_poer_status(
+    poer_status = await fetch_poer_status_cached(
         api_key=poer_api_key,
         preferred_device_id=normalized.get("poer_device_id"),
     )

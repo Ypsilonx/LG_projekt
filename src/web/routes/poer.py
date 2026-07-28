@@ -13,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from poer_api import fetch_poer_status, send_poer_command
+from poer_api import fetch_poer_status_cached, send_poer_command
 from web.routes.weather import _load_weather_config
 
 router = APIRouter(prefix="/api/poer", tags=["POER"])
@@ -62,10 +62,10 @@ def _require_poer_api_key() -> str:
 
 @router.get("/status", summary="Aktuální stav POER termostatu")
 async def get_poer_status() -> dict:
-    """Vrátí aktuální stav POER termostatu z cloud API."""
+    """Vrátí aktuální stav POER termostatu z cloud API (krátce cachováno)."""
 
     api_key = _require_poer_api_key()
-    status = await fetch_poer_status(
+    status = await fetch_poer_status_cached(
         api_key=api_key,
         preferred_device_id=_resolve_preferred_device_id(),
     )
