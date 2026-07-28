@@ -26,16 +26,18 @@ _STATE_FILE = Path(__file__).resolve().parents[3] / "data" / "state.json"
 
 def _save_control_mode(mode: str) -> None:
     """
-    Uloží control_mode do data/state.json.
+    Uloží control_mode do data/state.json (atomicky přes tmp soubor + replace).
 
     Args:
         mode: "AUTO" nebo "HAND" – hodnota k uložení.
     """
     try:
-        _STATE_FILE.write_text(
+        tmp = _STATE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(
             json.dumps({"control_mode": mode}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        tmp.replace(_STATE_FILE)
     except Exception as exc:
         logger.warning("Nelze uložit control_mode do state.json: %s", exc)
 

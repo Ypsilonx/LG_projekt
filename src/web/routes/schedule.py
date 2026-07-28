@@ -22,6 +22,7 @@ Každá položka plánu má tvar::
     }
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -35,6 +36,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/schedule", tags=["Plánování"])
 
 _DATA_DIR = Path("data")
+
+# Serializuje read-modify-write cyklus napříč souběžnými requesty (např. dva
+# otevřené tab v prohlížeči), aby si dva zápisy navzájem nepřepsaly změny.
+_write_lock = asyncio.Lock()
 
 
 def _read_schedule() -> dict:
@@ -96,11 +101,17 @@ _VALID_FANS = {"AUTO", "LOW", "MID", "HIGH"}
 def _write_schedule(data: dict) -> None:
     """Atomicky zapíše data/schedule.json (UTF-8, odsazení 2 mezery).
 
+    Zapisuje se přes dočasný soubor a `replace`, aby pád procesu uprostřed
+    zápisu (výpadek napájení, OOM kill v Dockeru) nezanechal poškozený JSON,
+    který by shodil `_scheduler_loop` i tento router při dalším startu.
+
     Args:
         data: Normalizovaná struktura ``{schedules, settings}``.
     """
     path = _DATA_DIR / "schedule.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _validate_entry(entry: dict[str, Any]) -> None:
@@ -200,9 +211,10 @@ async def create_schedule_entry(entry: dict[str, Any]) -> dict:
     entry.pop("id", None)           # id se vždy generuje serverem
     normalized = _normalize_entry(entry)
     try:
-        data = _read_schedule()
-        data["schedules"].append(normalized)
-        _write_schedule(data)
+        async with _write_lock:
+            data = _read_schedule()
+            data["schedules"].append(normalized)
+            _write_schedule(data)
     except Exception as exc:
         logger.exception("Chyba při vytváření plánu")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -229,12 +241,13 @@ async def update_schedule_entry(entry_id: str, entry: dict[str, Any]) -> dict:
     entry["id"] = entry_id
     normalized = _normalize_entry(entry)
     try:
-        data = _read_schedule()
-        for i, s in enumerate(data["schedules"]):
-            if s.get("id") == entry_id:
-                data["schedules"][i] = normalized
-                _write_schedule(data)
-                return normalized
+        async with _write_lock:
+            data = _read_schedule()
+            for i, s in enumerate(data["schedules"]):
+                if s.get("id") == entry_id:
+                    data["schedules"][i] = normalized
+                    _write_schedule(data)
+                    return normalized
     except Exception as exc:
         logger.exception("Chyba při aktualizaci plánu %s", entry_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -256,12 +269,13 @@ async def delete_schedule_entry(entry_id: str) -> dict:
         HTTPException 500: Chyba zápisu souboru.
     """
     try:
-        data = _read_schedule()
-        original = len(data["schedules"])
-        data["schedules"] = [s for s in data["schedules"] if s.get("id") != entry_id]
-        if len(data["schedules"]) == original:
-            raise HTTPException(status_code=404, detail=f"Plán '{entry_id}' nenalezen.")
-        _write_schedule(data)
+        async with _write_lock:
+            data = _read_schedule()
+            original = len(data["schedules"])
+            data["schedules"] = [s for s in data["schedules"] if s.get("id") != entry_id]
+            if len(data["schedules"]) == original:
+                raise HTTPException(status_code=404, detail=f"Plán '{entry_id}' nenalezen.")
+            _write_schedule(data)
     except HTTPException:
         raise
     except Exception as exc:
@@ -285,12 +299,13 @@ async def toggle_schedule_entry(entry_id: str) -> dict:
         HTTPException 500: Chyba zápisu souboru.
     """
     try:
-        data = _read_schedule()
-        for s in data["schedules"]:
-            if s.get("id") == entry_id:
-                s["enabled"] = not s.get("enabled", True)
-                _write_schedule(data)
-                return s
+        async with _write_lock:
+            data = _read_schedule()
+            for s in data["schedules"]:
+                if s.get("id") == entry_id:
+                    s["enabled"] = not s.get("enabled", True)
+                    _write_schedule(data)
+                    return s
     except Exception as exc:
         logger.exception("Chyba při přepínání plánu %s", entry_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -316,10 +331,11 @@ async def patch_schedule_settings(body: dict[str, Any]) -> dict:
     allowed = {"enable_scheduler", "auto_execute"}
     update = {k: bool(v) for k, v in body.items() if k in allowed}
     try:
-        data = _read_schedule()
-        data.setdefault("settings", {}).update(update)
-        _write_schedule(data)
-        return data["settings"]
+        async with _write_lock:
+            data = _read_schedule()
+            data.setdefault("settings", {}).update(update)
+            _write_schedule(data)
+            return data["settings"]
     except Exception as exc:
         logger.exception("Chyba při aktualizaci nastavení plánovače")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
